@@ -35,8 +35,8 @@ def download_and_cut_clip(video_id, start, end):
         print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
         
         # YouTube videosunu indir
-        # client='ANDROID' - Daha az kısıtlama, bot koruması daha az
-        print("🔄 YouTube'dan video indiriliyor (ANDROID client)...")
+        # client='IOS' - Yüksek kalite için daha iyi, adaptive stream'leri destekler
+        print("🔄 YouTube'dan video indiriliyor (IOS client)...")
         
         # Retry mekanizması - bazen ilk denemede bot koruması devreye girebilir
         max_retries = 3
@@ -45,7 +45,7 @@ def download_and_cut_clip(video_id, start, end):
         
         for attempt in range(max_retries):
             try:
-                yt = YouTube(video_url, client='ANDROID', on_progress_callback=on_progress)
+                yt = YouTube(video_url, client='IOS', on_progress_callback=on_progress)
                 print(f"✅ YouTube nesnesi oluşturuldu: {yt.title}")
                 break
             except Exception as e:
@@ -59,23 +59,57 @@ def download_and_cut_clip(video_id, start, end):
             print(f"❌ {error_msg}")
             return {"success": False, "error": error_msg}
         
-        # 1080p progressive stream'i dene, yoksa en yüksek kaliteyi al
-        stream = yt.streams.filter(progressive=True, file_extension='mp4', resolution='1080p').first()
+        # En yüksek kalitede video stream (adaptive - sadece video)
+        video_stream = yt.streams.filter(adaptive=True, file_extension='mp4', only_video=True).order_by('resolution').desc().first()
         
-        if not stream:
-            # 1080p yoksa en yüksek kaliteyi al
-            print("⚠️ 1080p bulunamadı, en yüksek kalite indiriliyor...")
-            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        # En yüksek kalitede audio stream
+        audio_stream = yt.streams.filter(adaptive=True, only_audio=True).order_by('abr').desc().first()
         
-        if not stream:
+        if not video_stream:
             error_msg = "Uygun video stream bulunamadı"
             print(f"❌ {error_msg}")
             return {"success": False, "error": error_msg}
         
-        # Geçici dosya
-        temp_file = f"temp_{output_file}"
-        print(f"📥 Video indiriliyor: {stream.resolution} ({stream.filesize_mb:.1f} MB)")
-        stream.download(filename=temp_file)
+        # Geçici dosyalar
+        temp_video = f"temp_video_{output_file}"
+        temp_audio = f"temp_audio_{output_file.replace('.mp4', '.m4a')}"
+        temp_merged = f"temp_merged_{output_file}"
+        
+        print(f"📥 Video indiriliyor: {video_stream.resolution} ({video_stream.filesize_mb:.1f} MB)")
+        video_stream.download(filename=temp_video)
+        
+        if audio_stream:
+            print(f"🔊 Audio indiriliyor: {audio_stream.abr}")
+            audio_stream.download(filename=temp_audio)
+            
+            # FFmpeg ile video ve audio'yu birleştir
+            print(f"🔗 Video ve audio birleştiriliyor...")
+            merge_cmd = [
+                "ffmpeg",
+                "-i", temp_video,
+                "-i", temp_audio,
+                "-c", "copy",
+                "-y",
+                temp_merged
+            ]
+            merge_result = subprocess.run(merge_cmd, capture_output=True, text=True)
+            
+            # Geçici dosyaları temizle
+            if os.path.exists(temp_video):
+                os.remove(temp_video)
+            if os.path.exists(temp_audio):
+                os.remove(temp_audio)
+            
+            if merge_result.returncode != 0:
+                error_msg = f"Video birleştirme hatası: {merge_result.stderr}"
+                print(f"❌ {error_msg}")
+                return {"success": False, "error": error_msg}
+            
+            temp_file = temp_merged
+        else:
+            # Audio yoksa sadece video kullan
+            print("⚠️ Audio stream bulunamadı, sadece video kullanılıyor")
+            temp_file = temp_video
         
         if not os.path.exists(temp_file):
             error_msg = "Video indirilemedi"
@@ -115,7 +149,7 @@ def download_and_cut_clip(video_id, start, end):
                     "title": yt.title,
                     "author": yt.author,
                     "length": yt.length,
-                    "resolution": stream.resolution,
+                    "resolution": video_stream.resolution,
                     "file_size": file_size,
                     "file_size_mb": round(file_size / (1024 * 1024), 2)
                 }
