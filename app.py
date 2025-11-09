@@ -13,9 +13,6 @@ app = Flask(__name__)
 CLIPS_FOLDER = "clips"
 Path(CLIPS_FOLDER).mkdir(exist_ok=True)
 
-# YouTube po_token (environment variables'dan oku)
-PO_TOKEN = os.getenv('YOUTUBE_PO_TOKEN')
-
 def generate_clip_id(video_id, start, end):
     """Benzersiz clip ID oluştur"""
     unique_string = f"{video_id}_{start}_{end}"
@@ -39,19 +36,9 @@ def download_and_cut_clip(video_id, start, end, caption):
         print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
         
         # YouTube videosunu indir
-        # pytubefix 10.2.1 use_po_token parametresini destekliyor
-        try:
-            if PO_TOKEN:
-                yt = YouTube(video_url, use_po_token=True, po_token=PO_TOKEN, on_progress_callback=on_progress)
-                print("✅ po_token kullanılıyor")
-            else:
-                yt = YouTube(video_url, use_po_token=False, on_progress_callback=on_progress)
-                print("⚠️ po_token yok, bot koruması ile karşılaşabilirsiniz")
-        except Exception as e:
-            # Fallback - parametresiz dene
-            print(f"⚠️ po_token hatası: {e}")
-            yt = YouTube(video_url, on_progress_callback=on_progress)
-            print("⚠️ Parametresiz deneniyor")
+        # client='WEB' ile otomatik po_token oluşturma (nodejs ile)
+        print("🔄 YouTube'dan video indiriliyor (WEB client + otomatik po_token)...")
+        yt = YouTube(video_url, client='WEB', on_progress_callback=on_progress)
         
         stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
