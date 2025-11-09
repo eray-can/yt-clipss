@@ -85,19 +85,17 @@ def get_video_download_url(video_id):
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-def download_and_cut_clip(video_id, start, end):
-    """YouTube videosundan kesit indir ve kes"""
+def download_full_video(video_id):
+    """Tam videoyu indir (video+audio merge)"""
     try:
-        # Dosya adı oluştur: videoID_start-end.mp4
-        output_file = generate_clip_filename(video_id, start, end)
-        output_path = os.path.join(CLIPS_FOLDER, output_file)
+        temp_video_path = os.path.join(CLIPS_FOLDER, f"temp_{video_id}.mp4")
         
-        # Eğer dosya zaten varsa, tekrar indirme
-        if os.path.exists(output_path):
-            print(f"✅ Kesit zaten mevcut: {output_file}")
-            return {"success": True, "filename": output_file}
+        # Eğer zaten indirilmişse, tekrar indirme
+        if os.path.exists(temp_video_path):
+            print(f"✅ Video zaten indirilmiş: {video_id}")
+            return {"success": True, "path": temp_video_path}
         
-        print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
+        print(f"📥 Tam video indiriliyor: {video_id}")
         
         # Video indirme linkini al
         video_info, error = get_video_download_url(video_id)
@@ -111,19 +109,70 @@ def download_and_cut_clip(video_id, start, end):
         title = video_info['title']
         resolution = video_info['resolution']
         
-        # FFmpeg ile video+audio merge ve kesit oluştur
-        print(f"✂️ FFmpeg ile 720p video+audio merge ve kesiliyor: {start}s - {end}s")
+        # FFmpeg ile tam video+audio merge
+        print(f"🔄 FFmpeg ile 720p video+audio merge ediliyor...")
+        cmd = [
+            "ffmpeg",
+            "-i", video_url,
+            "-i", audio_url,
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-y",
+            temp_video_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"✅ Tam video indirildi: {video_id}")
+            return {
+                "success": True,
+                "path": temp_video_path,
+                "title": title,
+                "resolution": resolution
+            }
+        else:
+            error_msg = f"FFmpeg hatası: {result.stderr}"
+            print(f"❌ {error_msg}")
+            return {"success": False, "error": error_msg}
+            
+    except Exception as e:
+        error_msg = f"Hata: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {"success": False, "error": error_msg}
+
+def cut_clip_from_video(video_path, video_id, start, end, title, resolution):
+    """İndirilmiş videodan kesit oluştur"""
+    try:
+        output_file = generate_clip_filename(video_id, start, end)
+        output_path = os.path.join(CLIPS_FOLDER, output_file)
+        
+        # Eğer dosya zaten varsa, tekrar kesme
+        if os.path.exists(output_path):
+            print(f"✅ Kesit zaten mevcut: {output_file}")
+            file_size = os.path.getsize(output_path)
+            return {
+                "success": True,
+                "filename": output_file,
+                "video_info": {
+                    "title": title,
+                    "resolution": resolution,
+                    "file_size": file_size,
+                    "file_size_mb": round(file_size / (1024 * 1024), 2)
+                }
+            }
+        
+        print(f"✂️ Kesit oluşturuluyor: {start}s - {end}s")
         duration = end - start
+        
         cmd = [
             "ffmpeg",
             "-ss", str(start),
-            "-i", video_url,
-            "-ss", str(start),
-            "-i", audio_url,
-            "-t", str(duration),  # Duration
-            "-c:v", "copy",  # Video'yu re-encode etme, direkt kopyala (kalite kaybı yok)
-            "-c:a", "aac",
-            "-b:a", "192k",  # Audio bitrate
+            "-i", video_path,
+            "-t", str(duration),
+            "-c:v", "copy",
+            "-c:a", "copy",
             "-y",
             output_path
         ]
@@ -132,11 +181,9 @@ def download_and_cut_clip(video_id, start, end):
         
         if result.returncode == 0:
             print(f"✅ Kesit oluşturuldu: {output_file}")
-            
-            # Video bilgilerini de döndür
             file_size = os.path.getsize(output_path)
             return {
-                "success": True, 
+                "success": True,
                 "filename": output_file,
                 "video_info": {
                     "title": title,
@@ -182,9 +229,23 @@ def create_clips():
                 'error': 'video_id ve clips gerekli'
             }), 400
         
+        # Önce tam videoyu indir
+        download_result = download_full_video(video_id)
+        
+        if not download_result.get('success'):
+            return jsonify({
+                'success': False,
+                'error': download_result.get('error', 'Video indirilemedi')
+            }), 500
+        
+        video_path = download_result['path']
+        title = download_result.get('title', 'Unknown')
+        resolution = download_result.get('resolution', '720p')
+        
         results = []
         errors = []
         
+        # Tüm clipleri kes
         for idx, clip in enumerate(clips):
             start = clip.get('start')
             end = clip.get('end')
@@ -198,7 +259,7 @@ def create_clips():
                 continue
             
             # Kesit oluştur
-            result = download_and_cut_clip(video_id, start, end)
+            result = cut_clip_from_video(video_path, video_id, start, end, title, resolution)
             
             if result.get('success'):
                 filename = result['filename']
@@ -223,6 +284,14 @@ def create_clips():
                     'error': error_msg,
                     'clip': {'start': start, 'end': end}
                 })
+        
+        # Temp video dosyasını sil
+        try:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+                print(f"🗑️ Temp video silindi: {video_id}")
+        except Exception as e:
+            print(f"⚠️ Temp video silinemedi: {str(e)}")
         
         return jsonify({
             'success': len(results) > 0,
