@@ -1,11 +1,10 @@
 from flask import Flask, request, jsonify, send_from_directory, url_for
-from pytubefix import YouTube
-from pytubefix.cli import on_progress
 import subprocess
 import os
-import hashlib
 import time
+import requests
 from pathlib import Path
+from urllib.parse import quote
 
 app = Flask(__name__)
 
@@ -14,15 +13,76 @@ CLIPS_FOLDER = "clips"
 Path(CLIPS_FOLDER).mkdir(exist_ok=True)
 
 def generate_clip_filename(video_id, start, end):
-    """Dosya adı oluştur: videoID_start-end.mp4"""
-    # Dosya adı için güvenli format
-    return f"{video_id}_{start}-{end}.mp4"
+    """Dosya adı oluştur: videoID-start-end.mp4"""
+    return f"{video_id}-{start}-{end}.mp4"
+
+def get_video_download_url(video_id):
+    """Vidfly.ai API'den video indirme linkini al"""
+    try:
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        encoded_url = quote(video_url, safe='')
+        
+        api_url = f"https://api.vidfly.ai/api/media/youtube/download?url={encoded_url}"
+        
+        headers = {
+            'accept': '*/*',
+            'accept-language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'origin': 'https://vidfly.ai',
+            'referer': 'https://vidfly.ai/',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'x-app-name': 'vidfly-web',
+            'x-app-version': '1.0.0'
+        }
+        
+        print(f"🔄 Vidfly.ai API'ye istek atılıyor...")
+        response = requests.get(api_url, headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            return None, f"API hatası: {response.status_code}"
+        
+        data = response.json()
+        
+        if data.get('code') != 0:
+            return None, f"API yanıt hatası: {data}"
+        
+        items = data.get('data', {}).get('items', [])
+        title = data.get('data', {}).get('title', 'Unknown')
+        
+        # 720p mp4 video+audio formatını bul
+        video_url = None
+        resolution = None
+        
+        for item in items:
+            if item.get('ext') == 'mp4' and item.get('type') == 'video_with_audio':
+                if item.get('height') == 720:
+                    video_url = item.get('url')
+                    resolution = f"{item.get('height')}p"
+                    break
+        
+        # 720p yoksa en yüksek kaliteli video+audio'yu al
+        if not video_url:
+            for item in items:
+                if item.get('ext') == 'mp4' and item.get('type') == 'video_with_audio':
+                    video_url = item.get('url')
+                    resolution = f"{item.get('height')}p"
+                    break
+        
+        if not video_url:
+            return None, "720p video bulunamadı"
+        
+        print(f"✅ Video linki alındı: {resolution}")
+        return {
+            'url': video_url,
+            'title': title,
+            'resolution': resolution
+        }, None
+        
+    except Exception as e:
+        return None, f"Hata: {str(e)}"
 
 def download_and_cut_clip(video_id, start, end):
     """YouTube videosundan kesit indir ve kes"""
     try:
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
-        
         # Dosya adı oluştur: videoID_start-end.mp4
         output_file = generate_clip_filename(video_id, start, end)
         output_path = os.path.join(CLIPS_FOLDER, output_file)
@@ -34,107 +94,27 @@ def download_and_cut_clip(video_id, start, end):
         
         print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
         
-        # YouTube videosunu indir - farklı client'ları dene
-        print("🔄 YouTube'dan video indiriliyor...")
+        # Video indirme linkini al
+        video_info, error = get_video_download_url(video_id)
         
-        # Farklı client'ları sırayla dene
-        clients = ['IOS', 'ANDROID', 'WEB', 'MWEB']
-        max_retries = 2  # Her client için 2 deneme
-        yt = None
-        last_error = None
+        if error:
+            print(f"❌ {error}")
+            return {"success": False, "error": error}
         
-        for client in clients:
-            print(f"🔄 {client} client deneniyor...")
-            for attempt in range(max_retries):
-                try:
-                    yt = YouTube(video_url, client=client, on_progress_callback=on_progress)
-                    print(f"✅ YouTube nesnesi oluşturuldu ({client}): {yt.title}")
-                    break
-                except Exception as e:
-                    last_error = str(e)
-                    if "bot" in str(e).lower():
-                        print(f"⚠️ {client} bot koruması - deneme {attempt + 1}/{max_retries}")
-                    else:
-                        print(f"⚠️ {client} hata: {str(e)[:100]}")
-                    
-                    if attempt < max_retries - 1:
-                        time.sleep(1)  # 1 saniye bekle
-            
-            if yt:
-                break  # Başarılı olduysa döngüden çık
-            
-            time.sleep(0.5)  # Client'lar arası kısa bekleme
+        video_url = video_info['url']
+        title = video_info['title']
+        resolution = video_info['resolution']
         
-        if not yt:
-            error_msg = f"YouTube nesnesi oluşturulamadı (tüm client'lar denendi): {last_error}"
-            print(f"❌ {error_msg}")
-            return {"success": False, "error": error_msg}
+        # Geçici dosya
+        temp_file = f"temp_{output_file}"
         
-        # En yüksek kalitede video stream (adaptive - sadece video)
-        video_stream = yt.streams.filter(adaptive=True, file_extension='mp4', only_video=True).order_by('resolution').desc().first()
-        
-        # En yüksek kalitede audio stream
-        audio_stream = yt.streams.filter(adaptive=True, only_audio=True).order_by('abr').desc().first()
-        
-        if not video_stream:
-            error_msg = "Uygun video stream bulunamadı"
-            print(f"❌ {error_msg}")
-            return {"success": False, "error": error_msg}
-        
-        # Geçici dosyalar
-        temp_video = f"temp_video_{output_file}"
-        temp_audio = f"temp_audio_{output_file.replace('.mp4', '.m4a')}"
-        temp_merged = f"temp_merged_{output_file}"
-        
-        print(f"📥 Video indiriliyor: {video_stream.resolution} ({video_stream.filesize_mb:.1f} MB)")
-        video_stream.download(filename=temp_video)
-        
-        if audio_stream:
-            print(f"🔊 Audio indiriliyor: {audio_stream.abr}")
-            audio_stream.download(filename=temp_audio)
-            
-            # FFmpeg ile video ve audio'yu birleştir
-            print(f"🔗 Video ve audio birleştiriliyor...")
-            merge_cmd = [
-                "ffmpeg",
-                "-i", temp_video,
-                "-i", temp_audio,
-                "-c", "copy",
-                "-y",
-                temp_merged
-            ]
-            merge_result = subprocess.run(merge_cmd, capture_output=True, text=True)
-            
-            # Geçici dosyaları temizle
-            if os.path.exists(temp_video):
-                os.remove(temp_video)
-            if os.path.exists(temp_audio):
-                os.remove(temp_audio)
-            
-            if merge_result.returncode != 0:
-                error_msg = f"Video birleştirme hatası: {merge_result.stderr}"
-                print(f"❌ {error_msg}")
-                return {"success": False, "error": error_msg}
-            
-            temp_file = temp_merged
-        else:
-            # Audio yoksa sadece video kullan
-            print("⚠️ Audio stream bulunamadı, sadece video kullanılıyor")
-            temp_file = temp_video
-        
-        if not os.path.exists(temp_file):
-            error_msg = "Video indirilemedi"
-            print(f"❌ {error_msg}")
-            return {"success": False, "error": error_msg}
-        
-        # FFmpeg ile kesit oluştur
-        # -c copy yerine re-encode kullan (daha doğru kesim için)
-        print(f"✂️ FFmpeg ile kesiliyor: {start}s - {end}s")
+        # FFmpeg ile direkt URL'den kesit oluştur
+        print(f"✂️ FFmpeg ile video kesiliyor: {start}s - {end}s ({resolution})")
         cmd = [
             "ffmpeg",
-            "-i", temp_file,
             "-ss", str(start),
-            "-to", str(end),
+            "-i", video_url,
+            "-to", str(end - start),  # Duration olarak hesapla
             "-c:v", "libx264",
             "-c:a", "aac",
             "-preset", "fast",
@@ -143,10 +123,6 @@ def download_and_cut_clip(video_id, start, end):
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # Geçici dosyayı sil
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
         
         if result.returncode == 0:
             print(f"✅ Kesit oluşturuldu: {output_file}")
@@ -157,10 +133,8 @@ def download_and_cut_clip(video_id, start, end):
                 "success": True, 
                 "filename": output_file,
                 "video_info": {
-                    "title": yt.title,
-                    "author": yt.author,
-                    "length": yt.length,
-                    "resolution": video_stream.resolution,
+                    "title": title,
+                    "resolution": resolution,
                     "file_size": file_size,
                     "file_size_mb": round(file_size / (1024 * 1024), 2)
                 }
@@ -233,7 +207,6 @@ def create_clips():
                     'url': clip_url,
                     'filename': filename,
                     'video_title': video_info.get('title'),
-                    'video_author': video_info.get('author'),
                     'resolution': video_info.get('resolution'),
                     'file_size_mb': video_info.get('file_size_mb')
                 })
