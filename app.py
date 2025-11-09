@@ -48,6 +48,14 @@ def get_video_download_url(video_id):
         items = data.get('data', {}).get('items', [])
         title = data.get('data', {}).get('title', 'Unknown')
         
+        # Mevcut çözünürlükleri logla
+        available_resolutions = []
+        for item in items:
+            if item.get('ext') == 'mp4' and item.get('type') == 'video_with_audio':
+                available_resolutions.append(f"{item.get('height')}p")
+        
+        print(f"📊 Mevcut çözünürlükler: {', '.join(available_resolutions)}")
+        
         # 720p mp4 video+audio formatını bul
         video_url = None
         resolution = None
@@ -59,16 +67,8 @@ def get_video_download_url(video_id):
                     resolution = f"{item.get('height')}p"
                     break
         
-        # 720p yoksa en yüksek kaliteli video+audio'yu al
         if not video_url:
-            for item in items:
-                if item.get('ext') == 'mp4' and item.get('type') == 'video_with_audio':
-                    video_url = item.get('url')
-                    resolution = f"{item.get('height')}p"
-                    break
-        
-        if not video_url:
-            return None, "720p video bulunamadı"
+            return None, f"720p video bulunamadı. Mevcut çözünürlükler: {', '.join(available_resolutions)}"
         
         print(f"✅ Video linki alındı: {resolution}")
         return {
@@ -211,9 +211,10 @@ def create_clips():
                     'file_size_mb': video_info.get('file_size_mb')
                 })
             else:
+                error_msg = result.get('error', 'Bilinmeyen hata')
                 errors.append({
                     'index': idx,
-                    'error': result.get('error', 'Bilinmeyen hata'),
+                    'error': error_msg,
                     'clip': {'start': start, 'end': end}
                 })
         
