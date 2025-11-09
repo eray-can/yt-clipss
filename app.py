@@ -29,7 +29,8 @@ def download_and_cut_clip(video_id, start, end, caption):
         
         # Eğer dosya zaten varsa, tekrar indirme
         if os.path.exists(output_path):
-            return output_file
+            print(f"✅ Kesit zaten mevcut: {output_file}")
+            return {"success": True, "filename": output_file}
         
         print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
         
@@ -37,11 +38,23 @@ def download_and_cut_clip(video_id, start, end, caption):
         yt = YouTube(video_url)
         stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
+        if not stream:
+            error_msg = "Uygun video stream bulunamadı"
+            print(f"❌ {error_msg}")
+            return {"success": False, "error": error_msg}
+        
         # Geçici dosya
         temp_file = f"temp_{clip_id}.mp4"
+        print(f"Video indiriliyor: {stream.resolution}")
         stream.download(filename=temp_file)
         
+        if not os.path.exists(temp_file):
+            error_msg = "Video indirilemedi"
+            print(f"❌ {error_msg}")
+            return {"success": False, "error": error_msg}
+        
         # FFmpeg ile kesit oluştur
+        print(f"FFmpeg ile kesiliyor: {start}s - {end}s")
         cmd = [
             "ffmpeg",
             "-i", temp_file,
@@ -60,14 +73,16 @@ def download_and_cut_clip(video_id, start, end, caption):
         
         if result.returncode == 0:
             print(f"✅ Kesit oluşturuldu: {output_file}")
-            return output_file
+            return {"success": True, "filename": output_file}
         else:
-            print(f"❌ FFmpeg hatası: {result.stderr}")
-            return None
+            error_msg = f"FFmpeg hatası: {result.stderr}"
+            print(f"❌ {error_msg}")
+            return {"success": False, "error": error_msg}
             
     except Exception as e:
-        print(f"❌ Hata: {str(e)}")
-        return None
+        error_msg = f"Hata: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {"success": False, "error": error_msg}
 
 @app.route('/api/create-clips', methods=['POST'])
 def create_clips():
@@ -100,19 +115,26 @@ def create_clips():
             }), 400
         
         results = []
+        errors = []
         
-        for clip in clips:
+        for idx, clip in enumerate(clips):
             start = clip.get('start')
             end = clip.get('end')
             caption = clip.get('caption', '')
             
             if start is None or end is None:
+                errors.append({
+                    'index': idx,
+                    'error': 'start ve end değerleri gerekli',
+                    'clip': clip
+                })
                 continue
             
             # Kesit oluştur
-            filename = download_and_cut_clip(video_id, start, end, caption)
+            result = download_and_cut_clip(video_id, start, end, caption)
             
-            if filename:
+            if result.get('success'):
+                filename = result['filename']
                 # URL oluştur
                 clip_url = url_for('serve_clip', filename=filename, _external=True)
                 
@@ -124,12 +146,20 @@ def create_clips():
                     'url': clip_url,
                     'filename': filename
                 })
+            else:
+                errors.append({
+                    'index': idx,
+                    'error': result.get('error', 'Bilinmeyen hata'),
+                    'clip': {'start': start, 'end': end, 'caption': caption}
+                })
         
         return jsonify({
-            'success': True,
+            'success': len(results) > 0,
             'video_id': video_id,
             'clips': results,
-            'total': len(results)
+            'total': len(results),
+            'errors': errors if errors else None,
+            'error_count': len(errors)
         })
         
     except Exception as e:
