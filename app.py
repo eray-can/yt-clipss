@@ -46,7 +46,13 @@ def download_and_cut_clip(video_id, start, end, caption):
             print(f"❌ {error_msg}")
             return {"success": False, "error": error_msg}
         
-        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        # 1080p progressive stream'i dene, yoksa en yüksek kaliteyi al
+        stream = yt.streams.filter(progressive=True, file_extension='mp4', resolution='1080p').first()
+        
+        if not stream:
+            # 1080p yoksa en yüksek kaliteyi al
+            print("⚠️ 1080p bulunamadı, en yüksek kalite indiriliyor...")
+            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
         if not stream:
             error_msg = "Uygun video stream bulunamadı"
@@ -55,7 +61,7 @@ def download_and_cut_clip(video_id, start, end, caption):
         
         # Geçici dosya
         temp_file = f"temp_{clip_id}.mp4"
-        print(f"Video indiriliyor: {stream.resolution}")
+        print(f"📥 Video indiriliyor: {stream.resolution} ({stream.filesize_mb:.1f} MB)")
         stream.download(filename=temp_file)
         
         if not os.path.exists(temp_file):
