@@ -13,19 +13,20 @@ app = Flask(__name__)
 CLIPS_FOLDER = "clips"
 Path(CLIPS_FOLDER).mkdir(exist_ok=True)
 
-def generate_clip_id(video_id, start, end):
-    """Benzersiz clip ID oluştur"""
-    unique_string = f"{video_id}_{start}_{end}"
-    return hashlib.md5(unique_string.encode()).hexdigest()[:12]
+def generate_clip_filename(video_id, start, end):
+    """Dosya adı oluştur: videoID_start-end.mp4"""
+    # Saniye değerlerini temizle (nokta yerine tire)
+    start_clean = str(start).replace('.', '_')
+    end_clean = str(end).replace('.', '_')
+    return f"{video_id}_{start_clean}-{end_clean}.mp4"
 
 def download_and_cut_clip(video_id, start, end, caption):
     """YouTube videosundan kesit indir ve kes"""
     try:
         video_url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # Clip ID ve dosya adı oluştur
-        clip_id = generate_clip_id(video_id, start, end)
-        output_file = f"{clip_id}.mp4"
+        # Dosya adı oluştur: videoID_start-end.mp4
+        output_file = generate_clip_filename(video_id, start, end)
         output_path = os.path.join(CLIPS_FOLDER, output_file)
         
         # Eğer dosya zaten varsa, tekrar indirme
@@ -38,11 +39,25 @@ def download_and_cut_clip(video_id, start, end, caption):
         # YouTube videosunu indir
         # client='ANDROID' - Daha az kısıtlama, bot koruması daha az
         print("🔄 YouTube'dan video indiriliyor (ANDROID client)...")
-        try:
-            yt = YouTube(video_url, client='ANDROID', on_progress_callback=on_progress)
-            print(f"✅ YouTube nesnesi oluşturuldu: {yt.title}")
-        except Exception as e:
-            error_msg = f"YouTube nesnesi oluşturulamadı: {str(e)}"
+        
+        # Retry mekanizması - bazen ilk denemede bot koruması devreye girebilir
+        max_retries = 3
+        yt = None
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                yt = YouTube(video_url, client='ANDROID', on_progress_callback=on_progress)
+                print(f"✅ YouTube nesnesi oluşturuldu: {yt.title}")
+                break
+            except Exception as e:
+                last_error = str(e)
+                print(f"⚠️ Deneme {attempt + 1}/{max_retries} başarısız: {last_error}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # 2 saniye bekle
+        
+        if not yt:
+            error_msg = f"YouTube nesnesi oluşturulamadı ({max_retries} deneme): {last_error}"
             print(f"❌ {error_msg}")
             return {"success": False, "error": error_msg}
         
@@ -60,7 +75,7 @@ def download_and_cut_clip(video_id, start, end, caption):
             return {"success": False, "error": error_msg}
         
         # Geçici dosya
-        temp_file = f"temp_{clip_id}.mp4"
+        temp_file = f"temp_{output_file}"
         print(f"📥 Video indiriliyor: {stream.resolution} ({stream.filesize_mb:.1f} MB)")
         stream.download(filename=temp_file)
         
