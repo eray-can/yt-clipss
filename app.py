@@ -113,16 +113,17 @@ def download_and_cut_clip(video_id, start, end):
         
         # FFmpeg ile video+audio merge ve kesit oluştur
         print(f"✂️ FFmpeg ile 720p video+audio merge ve kesiliyor: {start}s - {end}s")
+        duration = end - start
         cmd = [
             "ffmpeg",
             "-ss", str(start),
             "-i", video_url,
             "-ss", str(start),
             "-i", audio_url,
-            "-to", str(end - start),  # Duration olarak hesapla
-            "-c:v", "libx264",
+            "-t", str(duration),  # Duration
+            "-c:v", "copy",  # Video'yu re-encode etme, direkt kopyala (kalite kaybı yok)
             "-c:a", "aac",
-            "-preset", "fast",
+            "-b:a", "192k",  # Audio bitrate
             "-y",
             output_path
         ]
@@ -263,6 +264,62 @@ def list_clips():
         'total': len(clips)
     })
 
+@app.route('/api/clips/<filename>', methods=['DELETE'])
+def delete_clip(filename):
+    """Belirli bir kesiti sil"""
+    try:
+        file_path = os.path.join(CLIPS_FOLDER, filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({
+                'success': False,
+                'error': 'Dosya bulunamadı'
+            }), 404
+        
+        os.remove(file_path)
+        
+        return jsonify({
+            'success': True,
+            'message': f'{filename} silindi'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/clips/all', methods=['DELETE'])
+def delete_all_clips():
+    """Tüm kesitleri sil"""
+    try:
+        deleted_count = 0
+        errors = []
+        
+        for filename in os.listdir(CLIPS_FOLDER):
+            if filename.endswith('.mp4'):
+                try:
+                    file_path = os.path.join(CLIPS_FOLDER, filename)
+                    os.remove(file_path)
+                    deleted_count += 1
+                except Exception as e:
+                    errors.append({
+                        'filename': filename,
+                        'error': str(e)
+                    })
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_count,
+            'errors': errors if errors else None
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/')
 def index():
     """API bilgisi"""
@@ -272,7 +329,9 @@ def index():
         'endpoints': {
             'POST /api/create-clips': 'Kesitler oluştur',
             'GET /api/clips': 'Mevcut kesitleri listele',
-            'GET /clips/<filename>': 'Kesit dosyasını indir'
+            'GET /clips/<filename>': 'Kesit dosyasını indir',
+            'DELETE /api/clips/<filename>': 'Belirli bir kesiti sil',
+            'DELETE /api/clips/all': 'Tüm kesitleri sil'
         }
     })
 
