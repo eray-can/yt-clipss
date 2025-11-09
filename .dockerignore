@@ -22,6 +22,7 @@ coverage.xml
 .pytest_cache
 .hypothesis
 clips/*.mp4
+jobs/*.json
 temp_*.mp4
 *.md
 test_*.py

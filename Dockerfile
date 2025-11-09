@@ -16,8 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Uygulama dosyalarını kopyala
 COPY . .
 
-# Clips klasörünü oluştur
-RUN mkdir -p clips
+# Clips ve Jobs klasörlerini oluştur
+RUN mkdir -p clips jobs
 
 # Port
 EXPOSE 5000

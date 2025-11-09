@@ -8,6 +8,7 @@ from urllib.parse import quote
 import threading
 import uuid
 from datetime import datetime
+import json
 
 app = Flask(__name__)
 
@@ -15,8 +16,29 @@ app = Flask(__name__)
 CLIPS_FOLDER = "clips"
 Path(CLIPS_FOLDER).mkdir(exist_ok=True)
 
-# Job durumlarını sakla (memory'de, basit bir dict)
-jobs = {}
+# Job durumlarını sakla (file-based, worker'lar arası paylaşım için)
+JOBS_FOLDER = "jobs"
+Path(JOBS_FOLDER).mkdir(exist_ok=True)
+
+def get_job(job_id):
+    """Job'u dosyadan oku"""
+    job_file = os.path.join(JOBS_FOLDER, f"{job_id}.json")
+    if os.path.exists(job_file):
+        with open(job_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return None
+
+def save_job(job_id, job_data):
+    """Job'u dosyaya kaydet"""
+    job_file = os.path.join(JOBS_FOLDER, f"{job_id}.json")
+    with open(job_file, 'w', encoding='utf-8') as f:
+        json.dump(job_data, f, ensure_ascii=False, indent=2)
+
+def delete_job(job_id):
+    """Job dosyasını sil"""
+    job_file = os.path.join(JOBS_FOLDER, f"{job_id}.json")
+    if os.path.exists(job_file):
+        os.remove(job_file)
 
 def generate_clip_filename(video_id, start, end):
     """Dosya adı oluştur: videoID-start-end.mp4"""
@@ -200,9 +222,10 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
 def cleanup_job(job_id):
     """Job'u 10 dakika sonra sil"""
     time.sleep(600)  # 10 dakika bekle
-    if job_id in jobs:
+    job = get_job(job_id)
+    if job:
         print(f"🗑️ Job siliniyor: {job_id}")
-        del jobs[job_id]
+        delete_job(job_id)
 
 def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, resolution):
     """Clipleri async olarak işle"""
@@ -211,9 +234,11 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
         errors = []
         
         # Job'u processing olarak işaretle
-        jobs[job_id]['status'] = 'processing'
-        jobs[job_id]['total'] = len(clips)
-        jobs[job_id]['processed'] = 0
+        job = get_job(job_id)
+        job['status'] = 'processing'
+        job['total'] = len(clips)
+        job['processed'] = 0
+        save_job(job_id, job)
         
         # Tüm clipleri kes
         for idx, clip in enumerate(clips):
@@ -226,7 +251,8 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                     'error': 'start ve end değerleri gerekli',
                     'clip': clip
                 })
-                jobs[job_id]['processed'] += 1
+                job['processed'] += 1
+                save_job(job_id, job)
                 continue
             
             # Kesit oluştur (URL'den direkt)
@@ -235,9 +261,6 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
             if result.get('success'):
                 filename = result['filename']
                 video_info = result.get('video_info', {})
-                
-                # URL manuel oluştur (Flask context olmadan)
-                clip_url = f"http://localhost:5000/clips/{filename}"  # Geçici, check_job'da düzgün URL oluşturulacak
                 
                 results.append({
                     'start': start,
@@ -255,13 +278,15 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                     'clip': {'start': start, 'end': end}
                 })
             
-            jobs[job_id]['processed'] += 1
+            job['processed'] += 1
+            save_job(job_id, job)
         
         # Job'u finished olarak işaretle
-        jobs[job_id]['status'] = 'finished'
-        jobs[job_id]['results'] = results
-        jobs[job_id]['errors'] = errors
-        jobs[job_id]['completed_at'] = datetime.now().isoformat()
+        job['status'] = 'finished'
+        job['results'] = results
+        job['errors'] = errors
+        job['completed_at'] = datetime.now().isoformat()
+        save_job(job_id, job)
         
         # 10 dakika sonra job'u sil
         cleanup_thread = threading.Thread(target=cleanup_job, args=(job_id,))
@@ -269,8 +294,11 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
         cleanup_thread.start()
         
     except Exception as e:
-        jobs[job_id]['status'] = 'failed'
-        jobs[job_id]['error'] = str(e)
+        job = get_job(job_id)
+        if job:
+            job['status'] = 'failed'
+            job['error'] = str(e)
+            save_job(job_id, job)
 
 @app.route('/api/create-clips', methods=['POST'])
 def create_clips():
@@ -316,8 +344,8 @@ def create_clips():
         # Job ID oluştur
         job_id = str(uuid.uuid4())
         
-        # Job'u kaydet
-        jobs[job_id] = {
+        # Job'u kaydet (file-based)
+        job_data = {
             'job_id': job_id,
             'video_id': video_id,
             'status': 'pending',
@@ -326,6 +354,7 @@ def create_clips():
             'processed': 0,
             'clip_filenames': [generate_clip_filename(video_id, c.get('start'), c.get('end')) for c in clips if c.get('start') is not None and c.get('end') is not None]
         }
+        save_job(job_id, job_data)
         
         # Async olarak işle
         thread = threading.Thread(
@@ -343,7 +372,7 @@ def create_clips():
             'status': 'pending',
             'total_clips': len(clips),
             'message': 'Job başlatıldı. /api/check-job/<job_id> ile durumu kontrol edin.',
-            'clip_filenames': jobs[job_id]['clip_filenames']
+            'clip_filenames': job_data['clip_filenames']
         })
         
     except Exception as e:
@@ -355,13 +384,13 @@ def create_clips():
 @app.route('/api/check-job/<job_id>', methods=['GET'])
 def check_job(job_id):
     """Job durumunu kontrol et"""
-    if job_id not in jobs:
+    job = get_job(job_id)
+    
+    if not job:
         return jsonify({
             'success': False,
             'error': 'Job bulunamadı'
         }), 404
-    
-    job = jobs[job_id]
     
     response = {
         'success': True,
