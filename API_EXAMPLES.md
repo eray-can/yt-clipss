@@ -66,7 +66,7 @@ curl http://localhost:5000/api/check-job/1b12d124-0aa5-48b6-9d05-e9ea7dd13373
   "success": true,
   "job_id": "1b12d124-0aa5-48b6-9d05-e9ea7dd13373",
   "video_id": "Z3TMbaX_X0k",
-  "status": "completed",
+  "status": "finished",
   "created_at": "2025-11-09T23:57:32.843046",
   "completed_at": "2025-11-09T23:57:45.123456",
   "total": 3,
@@ -184,7 +184,7 @@ curl -X DELETE http://localhost:5000/api/clips/all
 
 - **`pending`** - Job başlatıldı, henüz işleme başlanmadı
 - **`processing`** - Clipler işleniyor
-- **`completed`** - Tüm clipler başarıyla oluşturuldu
+- **`finished`** - Tüm clipler başarıyla oluşturuldu (10 dakika sonra job silinecek)
 - **`failed`** - Job başarısız oldu
 
 ---
@@ -211,7 +211,7 @@ async function createAndWaitForClips(videoId, clips) {
     
     console.log(`Durum: ${jobStatus.status} | İşlenen: ${jobStatus.processed}/${jobStatus.total}`);
     
-    if (jobStatus.status === 'completed') {
+    if (jobStatus.status === 'finished') {
       console.log('✅ Tamamlandı!');
       return jobStatus.clips;
     } else if (jobStatus.status === 'failed') {
@@ -257,7 +257,7 @@ def create_and_wait_for_clips(video_id, clips):
         
         print(f"Durum: {job_status['status']} | İşlenen: {job_status['processed']}/{job_status['total']}")
         
-        if job_status['status'] == 'completed':
+        if job_status['status'] == 'finished':
             print('✅ Tamamlandı!')
             return job_status['clips']
         elif job_status['status'] == 'failed':

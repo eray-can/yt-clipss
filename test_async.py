@@ -41,7 +41,7 @@ while True:
     
     print(f"📊 Durum: {status} | İşlenen: {processed}/{total}")
     
-    if status == 'completed':
+    if status == 'finished':
         print(f"\n✅ Job tamamlandı!")
         print(json.dumps(job_status, indent=2))
         break

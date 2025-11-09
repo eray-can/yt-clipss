@@ -158,28 +158,51 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         
         result = subprocess.run(cmd, capture_output=True, text=True)
         
-        if result.returncode == 0:
-            print(f"✅ Kesit oluşturuldu: {output_file}")
-            file_size = os.path.getsize(output_path)
-            return {
-                "success": True,
-                "filename": output_file,
-                "video_info": {
-                    "title": title,
-                    "resolution": resolution,
-                    "file_size": file_size,
-                    "file_size_mb": round(file_size / (1024 * 1024), 2)
-                }
-            }
-        else:
+        # FFmpeg stderr'ini her zaman logla (hata olsa da olmasa da)
+        if result.stderr:
+            print(f"📋 FFmpeg log: {result.stderr[:500]}")
+        
+        if result.returncode != 0:
             error_msg = f"FFmpeg hatası: {result.stderr}"
             print(f"❌ {error_msg}")
             return {"success": False, "error": error_msg}
+        
+        # Dosya oluşturuldu mu ve boyutu 0'dan büyük mü kontrol et
+        if not os.path.exists(output_path):
+            error_msg = "Dosya oluşturulamadı"
+            print(f"❌ {error_msg}")
+            return {"success": False, "error": error_msg}
+        
+        file_size = os.path.getsize(output_path)
+        if file_size == 0:
+            error_msg = "Dosya boş oluşturuldu (0 byte)"
+            print(f"❌ {error_msg}")
+            os.remove(output_path)  # Boş dosyayı sil
+            return {"success": False, "error": error_msg}
+        
+        print(f"✅ Kesit oluşturuldu: {output_file} ({file_size} bytes)")
+        return {
+            "success": True,
+            "filename": output_file,
+            "video_info": {
+                "title": title,
+                "resolution": resolution,
+                "file_size": file_size,
+                "file_size_mb": round(file_size / (1024 * 1024), 2)
+            }
+        }
             
     except Exception as e:
         error_msg = f"Hata: {str(e)}"
         print(f"❌ {error_msg}")
         return {"success": False, "error": error_msg}
+
+def cleanup_job(job_id):
+    """Job'u 10 dakika sonra sil"""
+    time.sleep(600)  # 10 dakika bekle
+    if job_id in jobs:
+        print(f"🗑️ Job siliniyor: {job_id}")
+        del jobs[job_id]
 
 def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, resolution):
     """Clipleri async olarak işle"""
@@ -234,11 +257,16 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
             
             jobs[job_id]['processed'] += 1
         
-        # Job'u tamamlandı olarak işaretle
-        jobs[job_id]['status'] = 'completed'
+        # Job'u finished olarak işaretle
+        jobs[job_id]['status'] = 'finished'
         jobs[job_id]['results'] = results
         jobs[job_id]['errors'] = errors
         jobs[job_id]['completed_at'] = datetime.now().isoformat()
+        
+        # 10 dakika sonra job'u sil
+        cleanup_thread = threading.Thread(target=cleanup_job, args=(job_id,))
+        cleanup_thread.daemon = True
+        cleanup_thread.start()
         
     except Exception as e:
         jobs[job_id]['status'] = 'failed'
@@ -346,7 +374,7 @@ def check_job(job_id):
         'clip_filenames': job.get('clip_filenames', [])
     }
     
-    if job['status'] == 'completed':
+    if job['status'] == 'finished':
         response['completed_at'] = job.get('completed_at')
         # URL'leri düzgün oluştur
         clips_with_urls = []
