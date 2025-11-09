@@ -36,10 +36,15 @@ def download_and_cut_clip(video_id, start, end, caption):
         print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
         
         # YouTube videosunu indir
-        # client='WEB_EMBED' ile otomatik po_token oluşturma (nodejs ile)
-        # WEB_EMBED daha güvenilir, bot korumasını daha iyi aşıyor
-        print("🔄 YouTube'dan video indiriliyor (WEB_EMBED client + otomatik po_token)...")
-        yt = YouTube(video_url, client='WEB_EMBED', on_progress_callback=on_progress)
+        # client='ANDROID' - Daha az kısıtlama, bot koruması daha az
+        print("🔄 YouTube'dan video indiriliyor (ANDROID client)...")
+        try:
+            yt = YouTube(video_url, client='ANDROID', on_progress_callback=on_progress)
+            print(f"✅ YouTube nesnesi oluşturuldu: {yt.title}")
+        except Exception as e:
+            error_msg = f"YouTube nesnesi oluşturulamadı: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {"success": False, "error": error_msg}
         
         stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
