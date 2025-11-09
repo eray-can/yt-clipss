@@ -34,28 +34,39 @@ def download_and_cut_clip(video_id, start, end):
         
         print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
         
-        # YouTube videosunu indir
-        # client='IOS' - Yüksek kalite için daha iyi, adaptive stream'leri destekler
-        print("🔄 YouTube'dan video indiriliyor (IOS client)...")
+        # YouTube videosunu indir - farklı client'ları dene
+        print("🔄 YouTube'dan video indiriliyor...")
         
-        # Retry mekanizması - bazen ilk denemede bot koruması devreye girebilir
-        max_retries = 3
+        # Farklı client'ları sırayla dene
+        clients = ['IOS', 'ANDROID', 'WEB', 'MWEB']
+        max_retries = 2  # Her client için 2 deneme
         yt = None
         last_error = None
         
-        for attempt in range(max_retries):
-            try:
-                yt = YouTube(video_url, client='IOS', on_progress_callback=on_progress)
-                print(f"✅ YouTube nesnesi oluşturuldu: {yt.title}")
-                break
-            except Exception as e:
-                last_error = str(e)
-                print(f"⚠️ Deneme {attempt + 1}/{max_retries} başarısız: {last_error}")
-                if attempt < max_retries - 1:
-                    time.sleep(2)  # 2 saniye bekle
+        for client in clients:
+            print(f"🔄 {client} client deneniyor...")
+            for attempt in range(max_retries):
+                try:
+                    yt = YouTube(video_url, client=client, on_progress_callback=on_progress)
+                    print(f"✅ YouTube nesnesi oluşturuldu ({client}): {yt.title}")
+                    break
+                except Exception as e:
+                    last_error = str(e)
+                    if "bot" in str(e).lower():
+                        print(f"⚠️ {client} bot koruması - deneme {attempt + 1}/{max_retries}")
+                    else:
+                        print(f"⚠️ {client} hata: {str(e)[:100]}")
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(1)  # 1 saniye bekle
+            
+            if yt:
+                break  # Başarılı olduysa döngüden çık
+            
+            time.sleep(0.5)  # Client'lar arası kısa bekleme
         
         if not yt:
-            error_msg = f"YouTube nesnesi oluşturulamadı ({max_retries} deneme): {last_error}"
+            error_msg = f"YouTube nesnesi oluşturulamadı (tüm client'lar denendi): {last_error}"
             print(f"❌ {error_msg}")
             return {"success": False, "error": error_msg}
         
