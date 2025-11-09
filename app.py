@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory, url_for
 from pytubefix import YouTube
+from pytubefix.cli import on_progress
 import subprocess
 import os
 import hashlib
@@ -11,6 +12,10 @@ app = Flask(__name__)
 # Kesitlerin kaydedileceği klasör
 CLIPS_FOLDER = "clips"
 Path(CLIPS_FOLDER).mkdir(exist_ok=True)
+
+# YouTube po_token ve visitor_data (environment variables'dan oku)
+PO_TOKEN = os.getenv('YOUTUBE_PO_TOKEN')
+VISITOR_DATA = os.getenv('YOUTUBE_VISITOR_DATA')
 
 def generate_clip_id(video_id, start, end):
     """Benzersiz clip ID oluştur"""
@@ -34,8 +39,14 @@ def download_and_cut_clip(video_id, start, end, caption):
         
         print(f"İndiriliyor: {video_id} ({start}s - {end}s)")
         
-        # YouTube videosunu indir
-        yt = YouTube(video_url)
+        # YouTube videosunu indir (po_token ile)
+        if PO_TOKEN and VISITOR_DATA:
+            yt = YouTube(video_url, po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress)
+            print("✅ po_token kullanılıyor")
+        else:
+            yt = YouTube(video_url, on_progress_callback=on_progress)
+            print("⚠️ po_token yok, bot koruması ile karşılaşabilirsiniz")
+        
         stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
         if not stream:
