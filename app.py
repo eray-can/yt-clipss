@@ -42,10 +42,13 @@ def download_and_cut_clip(video_id, start, end, caption):
         # YouTube videosunu indir (po_token ile)
         if PO_TOKEN and VISITOR_DATA:
             yt = YouTube(video_url, po_token=PO_TOKEN, visitor_data=VISITOR_DATA, on_progress_callback=on_progress)
-            print("✅ po_token kullanılıyor")
+            print("✅ po_token ve visitor_data kullanılıyor")
+        elif VISITOR_DATA:
+            yt = YouTube(video_url, visitor_data=VISITOR_DATA, on_progress_callback=on_progress)
+            print("✅ visitor_data kullanılıyor (po_token yok)")
         else:
             yt = YouTube(video_url, on_progress_callback=on_progress)
-            print("⚠️ po_token yok, bot koruması ile karşılaşabilirsiniz")
+            print("⚠️ po_token ve visitor_data yok, bot koruması ile karşılaşabilirsiniz")
         
         stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
