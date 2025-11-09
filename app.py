@@ -15,12 +15,10 @@ Path(CLIPS_FOLDER).mkdir(exist_ok=True)
 
 def generate_clip_filename(video_id, start, end):
     """Dosya adı oluştur: videoID_start-end.mp4"""
-    # Saniye değerlerini temizle (nokta yerine tire)
-    start_clean = str(start).replace('.', '_')
-    end_clean = str(end).replace('.', '_')
-    return f"{video_id}_{start_clean}-{end_clean}.mp4"
+    # Dosya adı için güvenli format
+    return f"{video_id}_{start}-{end}.mp4"
 
-def download_and_cut_clip(video_id, start, end, caption):
+def download_and_cut_clip(video_id, start, end):
     """YouTube videosundan kesit indir ve kes"""
     try:
         video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -85,13 +83,16 @@ def download_and_cut_clip(video_id, start, end, caption):
             return {"success": False, "error": error_msg}
         
         # FFmpeg ile kesit oluştur
-        print(f"FFmpeg ile kesiliyor: {start}s - {end}s")
+        # -c copy yerine re-encode kullan (daha doğru kesim için)
+        print(f"✂️ FFmpeg ile kesiliyor: {start}s - {end}s")
         cmd = [
             "ffmpeg",
             "-i", temp_file,
             "-ss", str(start),
             "-to", str(end),
-            "-c", "copy",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-preset", "fast",
             "-y",
             output_path
         ]
@@ -104,7 +105,21 @@ def download_and_cut_clip(video_id, start, end, caption):
         
         if result.returncode == 0:
             print(f"✅ Kesit oluşturuldu: {output_file}")
-            return {"success": True, "filename": output_file}
+            
+            # Video bilgilerini de döndür
+            file_size = os.path.getsize(output_path)
+            return {
+                "success": True, 
+                "filename": output_file,
+                "video_info": {
+                    "title": yt.title,
+                    "author": yt.author,
+                    "length": yt.length,
+                    "resolution": stream.resolution,
+                    "file_size": file_size,
+                    "file_size_mb": round(file_size / (1024 * 1024), 2)
+                }
+            }
         else:
             error_msg = f"FFmpeg hatası: {result.stderr}"
             print(f"❌ {error_msg}")
@@ -126,10 +141,7 @@ def create_clips():
         "clips": [
             {
                 "start": 0.32,
-                "end": 41.56,
-                "duration": 41.24,
-                "text": "...",
-                "caption": "..."
+                "end": 41.56
             }
         ]
     }
@@ -151,7 +163,6 @@ def create_clips():
         for idx, clip in enumerate(clips):
             start = clip.get('start')
             end = clip.get('end')
-            caption = clip.get('caption', '')
             
             if start is None or end is None:
                 errors.append({
@@ -162,26 +173,30 @@ def create_clips():
                 continue
             
             # Kesit oluştur
-            result = download_and_cut_clip(video_id, start, end, caption)
+            result = download_and_cut_clip(video_id, start, end)
             
             if result.get('success'):
                 filename = result['filename']
+                video_info = result.get('video_info', {})
+                
                 # URL oluştur
                 clip_url = url_for('serve_clip', filename=filename, _external=True)
                 
                 results.append({
-                    'caption': caption,
                     'start': start,
                     'end': end,
-                    'duration': clip.get('duration'),
                     'url': clip_url,
-                    'filename': filename
+                    'filename': filename,
+                    'video_title': video_info.get('title'),
+                    'video_author': video_info.get('author'),
+                    'resolution': video_info.get('resolution'),
+                    'file_size_mb': video_info.get('file_size_mb')
                 })
             else:
                 errors.append({
                     'index': idx,
                     'error': result.get('error', 'Bilinmeyen hata'),
-                    'clip': {'start': start, 'end': end, 'caption': caption}
+                    'clip': {'start': start, 'end': end}
                 })
         
         return jsonify({
