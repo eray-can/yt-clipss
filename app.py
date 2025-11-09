@@ -5,12 +5,18 @@ import time
 import requests
 from pathlib import Path
 from urllib.parse import quote
+import threading
+import uuid
+from datetime import datetime
 
 app = Flask(__name__)
 
 # Kesitlerin kaydedileceği klasör
 CLIPS_FOLDER = "clips"
 Path(CLIPS_FOLDER).mkdir(exist_ok=True)
+
+# Job durumlarını sakla (memory'de, basit bir dict)
+jobs = {}
 
 def generate_clip_filename(video_id, start, end):
     """Dosya adı oluştur: videoID-start-end.mp4"""
@@ -175,10 +181,73 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         print(f"❌ {error_msg}")
         return {"success": False, "error": error_msg}
 
+def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, resolution):
+    """Clipleri async olarak işle"""
+    try:
+        results = []
+        errors = []
+        
+        # Job'u processing olarak işaretle
+        jobs[job_id]['status'] = 'processing'
+        jobs[job_id]['total'] = len(clips)
+        jobs[job_id]['processed'] = 0
+        
+        # Tüm clipleri kes
+        for idx, clip in enumerate(clips):
+            start = clip.get('start')
+            end = clip.get('end')
+            
+            if start is None or end is None:
+                errors.append({
+                    'index': idx,
+                    'error': 'start ve end değerleri gerekli',
+                    'clip': clip
+                })
+                jobs[job_id]['processed'] += 1
+                continue
+            
+            # Kesit oluştur (URL'den direkt)
+            result = cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution)
+            
+            if result.get('success'):
+                filename = result['filename']
+                video_info = result.get('video_info', {})
+                
+                # URL manuel oluştur (Flask context olmadan)
+                clip_url = f"http://localhost:5000/clips/{filename}"  # Geçici, check_job'da düzgün URL oluşturulacak
+                
+                results.append({
+                    'start': start,
+                    'end': end,
+                    'filename': filename,
+                    'video_title': video_info.get('title'),
+                    'resolution': video_info.get('resolution'),
+                    'file_size_mb': video_info.get('file_size_mb')
+                })
+            else:
+                error_msg = result.get('error', 'Bilinmeyen hata')
+                errors.append({
+                    'index': idx,
+                    'error': error_msg,
+                    'clip': {'start': start, 'end': end}
+                })
+            
+            jobs[job_id]['processed'] += 1
+        
+        # Job'u tamamlandı olarak işaretle
+        jobs[job_id]['status'] = 'completed'
+        jobs[job_id]['results'] = results
+        jobs[job_id]['errors'] = errors
+        jobs[job_id]['completed_at'] = datetime.now().isoformat()
+        
+    except Exception as e:
+        jobs[job_id]['status'] = 'failed'
+        jobs[job_id]['error'] = str(e)
+
 @app.route('/api/create-clips', methods=['POST'])
 def create_clips():
     """
-    Kesitler oluştur ve URL'lerini döndür
+    Kesitler oluştur (async) ve job ID döndür
     
     Request body:
     {
@@ -216,56 +285,37 @@ def create_clips():
         title = url_result.get('title', 'Unknown')
         resolution = url_result.get('resolution', '720p')
         
-        results = []
-        errors = []
+        # Job ID oluştur
+        job_id = str(uuid.uuid4())
         
-        # Tüm clipleri kes
-        for idx, clip in enumerate(clips):
-            start = clip.get('start')
-            end = clip.get('end')
-            
-            if start is None or end is None:
-                errors.append({
-                    'index': idx,
-                    'error': 'start ve end değerleri gerekli',
-                    'clip': clip
-                })
-                continue
-            
-            # Kesit oluştur (URL'den direkt)
-            result = cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution)
-            
-            if result.get('success'):
-                filename = result['filename']
-                video_info = result.get('video_info', {})
-                
-                # URL oluştur
-                clip_url = url_for('serve_clip', filename=filename, _external=True)
-                
-                results.append({
-                    'start': start,
-                    'end': end,
-                    'url': clip_url,
-                    'filename': filename,
-                    'video_title': video_info.get('title'),
-                    'resolution': video_info.get('resolution'),
-                    'file_size_mb': video_info.get('file_size_mb')
-                })
-            else:
-                error_msg = result.get('error', 'Bilinmeyen hata')
-                errors.append({
-                    'index': idx,
-                    'error': error_msg,
-                    'clip': {'start': start, 'end': end}
-                })
-        
-        return jsonify({
-            'success': len(results) > 0,
+        # Job'u kaydet
+        jobs[job_id] = {
+            'job_id': job_id,
             'video_id': video_id,
-            'clips': results,
-            'total': len(results),
-            'errors': errors if errors else None,
-            'error_count': len(errors)
+            'status': 'pending',
+            'created_at': datetime.now().isoformat(),
+            'total': len(clips),
+            'processed': 0,
+            'clip_filenames': [generate_clip_filename(video_id, c.get('start'), c.get('end')) for c in clips if c.get('start') is not None and c.get('end') is not None]
+        }
+        
+        # Async olarak işle
+        thread = threading.Thread(
+            target=process_clips_async,
+            args=(job_id, video_id, clips, video_url, audio_url, title, resolution)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Hemen job ID döndür
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'video_id': video_id,
+            'status': 'pending',
+            'total_clips': len(clips),
+            'message': 'Job başlatıldı. /api/check-job/<job_id> ile durumu kontrol edin.',
+            'clip_filenames': jobs[job_id]['clip_filenames']
         })
         
     except Exception as e:
@@ -273,6 +323,44 @@ def create_clips():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/check-job/<job_id>', methods=['GET'])
+def check_job(job_id):
+    """Job durumunu kontrol et"""
+    if job_id not in jobs:
+        return jsonify({
+            'success': False,
+            'error': 'Job bulunamadı'
+        }), 404
+    
+    job = jobs[job_id]
+    
+    response = {
+        'success': True,
+        'job_id': job_id,
+        'video_id': job['video_id'],
+        'status': job['status'],
+        'created_at': job['created_at'],
+        'total': job['total'],
+        'processed': job['processed'],
+        'clip_filenames': job.get('clip_filenames', [])
+    }
+    
+    if job['status'] == 'completed':
+        response['completed_at'] = job.get('completed_at')
+        # URL'leri düzgün oluştur
+        clips_with_urls = []
+        for clip in job.get('results', []):
+            clip_copy = clip.copy()
+            clip_copy['url'] = url_for('serve_clip', filename=clip['filename'], _external=True)
+            clips_with_urls.append(clip_copy)
+        response['clips'] = clips_with_urls
+        response['errors'] = job.get('errors')
+        response['error_count'] = len(job.get('errors', []))
+    elif job['status'] == 'failed':
+        response['error'] = job.get('error')
+    
+    return jsonify(response)
 
 @app.route('/clips/<filename>')
 def serve_clip(filename):
@@ -360,9 +448,10 @@ def index():
     """API bilgisi"""
     return jsonify({
         'name': 'YouTube Clip API',
-        'version': '1.0',
+        'version': '2.0',
         'endpoints': {
-            'POST /api/create-clips': 'Kesitler oluştur',
+            'POST /api/create-clips': 'Kesitler oluştur (async, job ID döndürür)',
+            'GET /api/check-job/<job_id>': 'Job durumunu kontrol et',
             'GET /api/clips': 'Mevcut kesitleri listele',
             'GET /clips/<filename>': 'Kesit dosyasını indir',
             'DELETE /api/clips/<filename>': 'Belirli bir kesiti sil',
