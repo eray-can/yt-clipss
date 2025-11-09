@@ -22,5 +22,5 @@ RUN mkdir -p clips
 # Port
 EXPOSE 5000
 
-# Gunicorn ile çalıştır (timeout 300 saniye = 5 dakika)
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "--timeout", "300", "app:app"]
+# Gunicorn ile çalıştır (timeout 900 saniye = 15 dakika)
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "--timeout", "900", "app:app"]

@@ -132,17 +132,20 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         print(f"✂️ Kesit oluşturuluyor: {start}s - {end}s")
         duration = end - start
         
-        # URL'den direkt kes
+        # URL'den direkt kes (optimize edilmiş)
+        # -ss'yi input'tan ÖNCE koyuyoruz (çok daha hızlı seek)
+        # -accurate_seek ile doğru frame'i bul
         cmd = [
             "ffmpeg",
-            "-ss", str(start),
+            "-ss", str(start),          # Video için seek (input'tan önce = hızlı)
             "-i", video_url,
-            "-ss", str(start),
+            "-ss", str(start),          # Audio için seek
             "-i", audio_url,
             "-t", str(duration),
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
+            "-c:v", "copy",             # Video copy (kalite kaybı yok, hızlı)
+            "-c:a", "copy",             # Audio copy (daha hızlı, aac zaten)
+            "-avoid_negative_ts", "make_zero",  # Timestamp sorunlarını önle
+            "-fflags", "+genpts",       # PTS oluştur
             "-y",
             output_path
         ]
