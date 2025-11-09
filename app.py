@@ -48,33 +48,38 @@ def get_video_download_url(video_id):
         items = data.get('data', {}).get('items', [])
         title = data.get('data', {}).get('title', 'Unknown')
         
-        # Mevcut çözünürlükleri logla
-        available_resolutions = []
-        for item in items:
-            if item.get('ext') == 'mp4' and item.get('type') == 'video_with_audio':
-                available_resolutions.append(f"{item.get('height')}p")
-        
-        print(f"📊 Mevcut çözünürlükler: {', '.join(available_resolutions)}")
-        
-        # 720p mp4 video+audio formatını bul
+        # 720p video bul (sadece video track)
         video_url = None
-        resolution = None
-        
         for item in items:
-            if item.get('ext') == 'mp4' and item.get('type') == 'video_with_audio':
-                if item.get('height') == 720:
-                    video_url = item.get('url')
-                    resolution = f"{item.get('height')}p"
-                    break
+            if item.get('ext') == 'mp4' and item.get('height') == 720:
+                video_url = item.get('url')
+                break
         
         if not video_url:
-            return None, f"720p video bulunamadı. Mevcut çözünürlükler: {', '.join(available_resolutions)}"
+            # Mevcut çözünürlükleri logla
+            available_resolutions = []
+            for item in items:
+                if item.get('ext') == 'mp4':
+                    res_type = item.get('type', 'unknown')
+                    available_resolutions.append(f"{item.get('height')}p ({res_type})")
+            return None, f"720p video bulunamadı. Mevcut: {', '.join(available_resolutions)}"
         
-        print(f"✅ Video linki alındı: {resolution}")
+        # En iyi audio track'i bul (m4a 131kb/s)
+        audio_url = None
+        for item in items:
+            if item.get('ext') == 'm4a' and item.get('type') == 'audio':
+                audio_url = item.get('url')
+                break
+        
+        if not audio_url:
+            return None, "Audio track bulunamadı"
+        
+        print(f"✅ 720p video + audio linki alındı")
         return {
-            'url': video_url,
+            'video_url': video_url,
+            'audio_url': audio_url,
             'title': title,
-            'resolution': resolution
+            'resolution': '720p'
         }, None
         
     except Exception as e:
@@ -101,19 +106,19 @@ def download_and_cut_clip(video_id, start, end):
             print(f"❌ {error}")
             return {"success": False, "error": error}
         
-        video_url = video_info['url']
+        video_url = video_info['video_url']
+        audio_url = video_info['audio_url']
         title = video_info['title']
         resolution = video_info['resolution']
         
-        # Geçici dosya
-        temp_file = f"temp_{output_file}"
-        
-        # FFmpeg ile direkt URL'den kesit oluştur
-        print(f"✂️ FFmpeg ile video kesiliyor: {start}s - {end}s ({resolution})")
+        # FFmpeg ile video+audio merge ve kesit oluştur
+        print(f"✂️ FFmpeg ile 720p video+audio merge ve kesiliyor: {start}s - {end}s")
         cmd = [
             "ffmpeg",
             "-ss", str(start),
             "-i", video_url,
+            "-ss", str(start),
+            "-i", audio_url,
             "-to", str(end - start),  # Duration olarak hesapla
             "-c:v", "libx264",
             "-c:a", "aac",
