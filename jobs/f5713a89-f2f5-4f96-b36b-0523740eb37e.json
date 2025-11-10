@@ -1,0 +1,23 @@
+{
+  "job_id": "f5713a89-f2f5-4f96-b36b-0523740eb37e",
+  "video_id": "L3LSKvtxvZQ",
+  "status": "finished",
+  "created_at": "2025-11-10T22:55:40.466182",
+  "total": 1,
+  "processed": 1,
+  "clip_filenames": [
+    "L3LSKvtxvZQ-0.0-122.0.mp4"
+  ],
+  "results": [
+    {
+      "start": 0.0,
+      "end": 122.0,
+      "filename": "L3LSKvtxvZQ-0.0-122.0.mp4",
+      "video_title": "Semicenk - Gözlerinden Gözlerine",
+      "resolution": "720p",
+      "file_size_mb": 29.14
+    }
+  ],
+  "errors": [],
+  "completed_at": "2025-11-10T22:55:45.617566"
+}
