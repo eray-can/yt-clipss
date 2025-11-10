@@ -160,24 +160,24 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         print(f"✂️ Kesit oluşturuluyor: {start}s - {end}s")
         duration = end - start
         
-        # URL'den direkt kes (optimize edilmiş)
-        # Audio senkronizasyon sorunu için: -ss'yi input'tan SONRA koy
-        # Bu biraz daha yavaş ama audio senkronizasyonu mükemmel olur
+        # URL'den direkt kes (optimize edilmiş + audio senkronizasyonu)
+        # Hibrit yaklaşım: Video copy (hızlı) + Audio encode (senkronizasyon)
+        # -ss'yi input'tan önce koy ama audio'yu özel işle
         cmd = [
             "ffmpeg",
+            "-ss", str(start),          # Video için hızlı seek
             "-i", video_url,
+            "-ss", str(start),          # Audio için seek
             "-i", audio_url,
-            "-ss", str(start),          # Input'tan SONRA (doğru senkronizasyon için)
             "-t", str(duration),
-            "-map", "0:v:0",            # İlk video stream
-            "-map", "1:a:0",            # İlk audio stream
-            "-c:v", "libx264",          # Video encode (senkronizasyon için)
-            "-preset", "ultrafast",     # En hızlı preset
-            "-crf", "23",               # Kalite
-            "-c:a", "aac",              # Audio encode
+            "-map", "0:v:0",            # Video stream
+            "-map", "1:a:0",            # Audio stream
+            "-c:v", "copy",             # Video copy (hızlı, kalite kaybı yok)
+            "-c:a", "aac",              # Audio encode (senkronizasyon için)
             "-b:a", "192k",             # Audio bitrate
-            "-af", "aresample=async=1", # Audio resample (senkronizasyon)
-            "-vsync", "cfr",            # Constant frame rate
+            "-af", "asetpts=PTS-STARTPTS", # Audio timestamp'i sıfırla
+            "-video_track_timescale", "90000", # Video timescale
+            "-movflags", "+faststart",  # Web için optimize et
             "-y",
             output_path
         ]
