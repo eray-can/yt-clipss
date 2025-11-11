@@ -212,6 +212,33 @@ curl -O http://localhost:5000/clips/abc123def456.mp4
 
 ---
 
+### 5️⃣ Job Yönetimi
+
+#### Tüm Job'ları Listele
+**Endpoint:** `GET /api/jobs`
+
+```bash
+curl http://localhost:5000/api/jobs
+```
+
+#### Belirli Bir Job'u Sil
+**Endpoint:** `DELETE /api/jobs/<job_id>`
+
+```bash
+curl -X DELETE http://localhost:5000/api/jobs/abc-123-def
+```
+
+#### Tüm Job'ları Sil
+**Endpoint:** `DELETE /api/jobs/all`
+
+```bash
+curl -X DELETE http://localhost:5000/api/jobs/all
+```
+
+**Detaylı örnekler için:** [JOB_API_EXAMPLES.md](JOB_API_EXAMPLES.md)
+
+---
+
 ## 🎨 Özellikler
 
 - ✅ YouTube videolarından otomatik kesit oluşturma

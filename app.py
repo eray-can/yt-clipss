@@ -572,15 +572,105 @@ def delete_all_clips():
             'error': str(e)
         }), 500
 
+@app.route('/api/jobs', methods=['GET'])
+def list_jobs():
+    """Tüm job'ları listele"""
+    try:
+        jobs = []
+        for filename in os.listdir(JOBS_FOLDER):
+            if filename.endswith('.json'):
+                job_id = filename.replace('.json', '')
+                job = get_job(job_id)
+                if job:
+                    jobs.append({
+                        'job_id': job_id,
+                        'video_id': job.get('video_id'),
+                        'status': job.get('status'),
+                        'created_at': job.get('created_at'),
+                        'total': job.get('total'),
+                        'processed': job.get('processed')
+                    })
+        
+        return jsonify({
+            'success': True,
+            'jobs': jobs,
+            'total': len(jobs)
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/jobs/<job_id>', methods=['DELETE'])
+def delete_job_endpoint(job_id):
+    """Belirli bir job'u sil"""
+    try:
+        job = get_job(job_id)
+        
+        if not job:
+            return jsonify({
+                'success': False,
+                'error': 'Job bulunamadı'
+            }), 404
+        
+        delete_job(job_id)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Job {job_id} silindi'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/jobs/all', methods=['DELETE'])
+def delete_all_jobs():
+    """Tüm job'ları sil"""
+    try:
+        deleted_count = 0
+        errors = []
+        
+        for filename in os.listdir(JOBS_FOLDER):
+            if filename.endswith('.json'):
+                try:
+                    job_id = filename.replace('.json', '')
+                    delete_job(job_id)
+                    deleted_count += 1
+                except Exception as e:
+                    errors.append({
+                        'job_id': filename.replace('.json', ''),
+                        'error': str(e)
+                    })
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_count,
+            'errors': errors if errors else None,
+            'message': f'{deleted_count} job silindi'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/')
 def index():
     """API bilgisi"""
     return jsonify({
         'name': 'YouTube Clip API',
-        'version': '2.0',
+        'version': '2.1',
         'endpoints': {
             'POST /api/create-clips': 'Kesitler oluştur (async, job ID döndürür)',
             'GET /api/check-job/<job_id>': 'Job durumunu kontrol et',
+            'GET /api/jobs': 'Tüm job\'ları listele',
+            'DELETE /api/jobs/<job_id>': 'Belirli bir job\'u sil',
+            'DELETE /api/jobs/all': 'Tüm job\'ları sil',
             'GET /api/clips': 'Mevcut kesitleri listele',
             'GET /clips/<filename>': 'Kesit dosyasını indir',
             'DELETE /api/clips/<filename>': 'Belirli bir kesiti sil',
