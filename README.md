@@ -2,6 +2,21 @@
 
 YouTube videolarından belirli zaman aralıklarında kesitler oluşturup URL olarak sunan Flask API.
 
+## ✨ Version 2.1.0 - Multi-Video Processing Fix
+
+**Yeni Özellikler:**
+- ✅ Robust exception handling - Bir video hata verse bile diğerleri işlenir
+- ✅ FFmpeg timeout protection (5 dakika) - Takılma sorunu çözüldü
+- ✅ Enhanced logging - Her adım detaylı loglanır
+- ✅ File validation - Boş dosyalar otomatik temizlenir
+- ✅ Comprehensive test suite - 13 unit test ile doğrulandı
+
+**Detaylı bilgi için:**
+- 📖 [FIXES.md](FIXES.md) - Yapılan düzeltmeler
+- 📖 [TESTING_GUIDE.md](TESTING_GUIDE.md) - Test rehberi
+- 📖 [ARCHITECTURE.md](ARCHITECTURE.md) - Sistem mimarisi
+- 📖 [SUMMARY.md](SUMMARY.md) - Özet rapor
+
 ## 🚀 Kurulum
 
 ```bash
@@ -12,6 +27,38 @@ pip install -r requirements.txt
 
 - Python 3.9+
 - FFmpeg (sistemde kurulu olmalı)
+
+## 🧪 Testing
+
+### Tüm Testleri Çalıştır
+```bash
+python run_tests.py
+```
+
+### Sadece Unit Testler
+```bash
+python test_unit.py
+```
+
+### Integration Testler (Server gerekli)
+```bash
+# Terminal 1: Server'ı başlat
+python app.py
+
+# Terminal 2: Testleri çalıştır
+python test_async.py
+python test_multi_video.py
+```
+
+**Test Coverage:**
+- ✅ Job management (save/get/delete)
+- ✅ Filename generation
+- ✅ Async clip processing
+- ✅ Exception handling
+- ✅ Multi-video scenarios
+- ✅ Error recovery
+
+Detaylı test rehberi için: [TESTING_GUIDE.md](TESTING_GUIDE.md)
 
 ## 🎯 Kullanım
 
@@ -168,11 +215,17 @@ curl -O http://localhost:5000/clips/abc123def456.mp4
 ## 🎨 Özellikler
 
 - ✅ YouTube videolarından otomatik kesit oluşturma
+- ✅ **Async job processing** - Hemen job ID döner, arka planda işler
+- ✅ **Multi-video support** - Birden fazla video aynı anda işlenebilir
+- ✅ **Robust error handling** - Bir hata tüm sistemi durdurmaz
+- ✅ **Timeout protection** - FFmpeg 5 dakikadan fazla takılmaz
+- ✅ **Smart file validation** - Boş dosyalar otomatik temizlenir
 - ✅ Benzersiz ID ile dosya yönetimi (aynı kesit tekrar indirilmez)
 - ✅ FFmpeg ile hızlı kesit oluşturma
 - ✅ URL üzerinden kesitlere erişim
 - ✅ Facebook Graph API ile uyumlu URL formatı
 - ✅ Production-ready (Gunicorn desteği)
+- ✅ **Comprehensive test suite** - 13 unit test
 
 ---
 
