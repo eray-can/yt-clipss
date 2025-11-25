@@ -136,6 +136,25 @@ def get_video_urls(video_id):
         print(f"❌ {error_msg}")
         return {"success": False, "error": error_msg}
 
+def validate_urls(video_url, audio_url):
+    """URL'lerin geçerliliğini kontrol et"""
+    try:
+        print(f"🔍 Video URL kontrol ediliyor...")
+        video_response = requests.head(video_url, timeout=10, allow_redirects=True)
+        if video_response.status_code not in [200, 206]:
+            return False, f"Video URL geçersiz (HTTP {video_response.status_code})"
+        
+        print(f"🔍 Audio URL kontrol ediliyor...")
+        audio_response = requests.head(audio_url, timeout=10, allow_redirects=True)
+        if audio_response.status_code not in [200, 206]:
+            return False, f"Audio URL geçersiz (HTTP {audio_response.status_code})"
+        
+        print(f"✅ URL'ler geçerli")
+        return True, None
+        
+    except Exception as e:
+        return False, f"URL kontrol hatası: {str(e)}"
+
 def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution):
     """URL'den direkt kesit oluştur"""
     output_path = None
@@ -163,28 +182,33 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
                 print(f"⚠️ Boş dosya bulundu, siliniyor: {output_file}")
                 os.remove(output_path)
         
+        # URL'lerin geçerliliğini kontrol et
+        url_valid, url_error = validate_urls(video_url, audio_url)
+        if not url_valid:
+            print(f"❌ {url_error}")
+            return {"success": False, "error": url_error}
+        
         print(f"✂️ Kesit oluşturuluyor: {start}s - {end}s (video: {video_id})")
         duration = end - start
         
-        # URL'den direkt kes (optimize edilmiş + audio senkronizasyonu)
-        # Hibrit yaklaşım: Video copy (hızlı) + Audio encode (senkronizasyon)
-        # -ss'yi input'tan önce koy ama audio'yu özel işle
+        # Daha basit ve güvenilir FFmpeg komutu
         cmd = [
             "ffmpeg",
-            "-ss", str(start),          # Video için hızlı seek
-            "-i", video_url,
-            "-ss", str(start),          # Audio için seek
-            "-i", audio_url,
-            "-t", str(duration),
-            "-map", "0:v:0",            # Video stream
-            "-map", "1:a:0",            # Audio stream
-            "-c:v", "copy",             # Video copy (hızlı, kalite kaybı yok)
-            "-c:a", "aac",              # Audio encode (senkronizasyon için)
-            "-b:a", "192k",             # Audio bitrate
-            "-af", "asetpts=PTS-STARTPTS", # Audio timestamp'i sıfırla
-            "-video_track_timescale", "90000", # Video timescale
-            "-movflags", "+faststart",  # Web için optimize et
-            "-y",
+            "-ss", str(start),          # Başlangıç zamanı
+            "-i", video_url,            # Video input
+            "-ss", str(start),          # Audio için başlangıç zamanı
+            "-i", audio_url,            # Audio input
+            "-t", str(duration),        # Süre
+            "-map", "0:v",              # Video stream (daha genel)
+            "-map", "1:a",              # Audio stream (daha genel)
+            "-c:v", "libx264",          # Video codec (copy yerine encode)
+            "-preset", "fast",          # Hızlı encoding
+            "-crf", "23",               # Kalite ayarı
+            "-c:a", "aac",              # Audio codec
+            "-b:a", "128k",             # Audio bitrate
+            "-movflags", "+faststart",  # Web için optimize
+            "-avoid_negative_ts", "make_zero", # Timestamp sorunlarını çöz
+            "-y",                       # Üzerine yaz
             output_path
         ]
         
@@ -194,12 +218,27 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         
         # FFmpeg stderr'ini her zaman logla (hata olsa da olmasa da)
         if result.stderr:
-            stderr_preview = result.stderr[:500] if len(result.stderr) > 500 else result.stderr
+            stderr_preview = result.stderr[:1000] if len(result.stderr) > 1000 else result.stderr
             print(f"📋 FFmpeg log: {stderr_preview}")
         
         if result.returncode != 0:
-            error_msg = f"FFmpeg hatası (code {result.returncode}): {result.stderr[:200]}"
+            # Daha detaylı hata analizi
+            error_details = result.stderr if result.stderr else "Bilinmeyen FFmpeg hatası"
+            
+            # Yaygın hata türlerini tespit et
+            if "Invalid data found when processing input" in error_details:
+                error_msg = f"FFmpeg hatası: Video/audio stream'e erişilemiyor. URL'ler geçersiz olabilir."
+            elif "Connection refused" in error_details or "HTTP error" in error_details:
+                error_msg = f"FFmpeg hatası: URL'lere bağlanılamıyor. Network sorunu olabilir."
+            elif "No such file or directory" in error_details:
+                error_msg = f"FFmpeg hatası: Input dosyası bulunamıyor."
+            else:
+                error_msg = f"FFmpeg hatası (code {result.returncode}): {error_details[:500]}"
+            
             print(f"❌ {error_msg}")
+            print(f"🔍 Kullanılan video URL: {video_url[:100]}...")
+            print(f"🔍 Kullanılan audio URL: {audio_url[:100]}...")
+            
             # Hatalı dosyayı temizle
             if output_path and os.path.exists(output_path):
                 try:
@@ -285,6 +324,33 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
         save_job(job_id, job)
         
         print(f"🔄 Processing started for job {job_id} with {len(clips)} clips")
+        
+        # URL'lerin geçerliliğini kontrol et
+        url_valid, url_error = validate_urls(video_url, audio_url)
+        if not url_valid:
+            print(f"⚠️ URL'ler geçersiz, yeni URL'ler alınıyor: {url_error}")
+            # Yeni URL'ler al
+            url_result = get_video_urls(video_id)
+            if url_result.get('success'):
+                video_url = url_result['video_url']
+                audio_url = url_result['audio_url']
+                title = url_result.get('title', title)
+                resolution = url_result.get('resolution', resolution)
+                print(f"✅ Yeni URL'ler alındı")
+            else:
+                # Tüm clipleri hatalı olarak işaretle
+                for idx, clip in enumerate(clips):
+                    errors.append({
+                        'index': idx,
+                        'error': f"Video URL'leri alınamadı: {url_result.get('error')}",
+                        'clip': clip
+                    })
+                # Job'u failed olarak işaretle
+                job['status'] = 'failed'
+                job['error'] = f"Video URL'leri alınamadı: {url_result.get('error')}"
+                job['errors'] = errors
+                save_job(job_id, job)
+                return
         
         # Tüm clipleri kes
         for idx, clip in enumerate(clips):
