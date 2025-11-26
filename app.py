@@ -149,94 +149,108 @@ def get_audio_from_turboscribe(video_id):
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-def get_video_from_vidfly(video_id):
-    """Vidfly.ai API'den sadece video linkini al"""
+def get_video_from_postsyncer(video_id):
+    """PostSyncer.com API'den video linkini al"""
     try:
         video_url = f"https://www.youtube.com/watch?v={video_id}"
-        encoded_url = quote(video_url, safe='')
         
-        api_url = f"https://api.vidfly.ai/api/media/youtube/download?url={encoded_url}"
+        api_url = "https://postsyncer.com/api/social-media-downloader"
         
         headers = {
             'accept': '*/*',
             'accept-language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
             'cache-control': 'no-cache',
             'content-type': 'application/json',
-            'origin': 'https://vidfly.ai',
+            'cookie': 'XSRF-TOKEN=eyJpdiI6Ijlhc0RxR3kybkpDcDB5d3MraTh3YVE9PSIsInZhbHVlIjoiQXRqNlVwd00zWXFnbndYOHJuRUdSQzkyWXVzU2RENlNIdmdtUVlXMjNYMy8xZk5MWlNsVGdOMUt6eVc3WmtrcFYwYmFVZ2UrQjhvUmtPRDE5ZlNreXRvTDlMWlBnNkpMZnRuYUtRYWl1Wjlmd3kyalJvemwwWlM3SC91MGhHMUgiLCJtYWMiOiI3MzY3MmRjNzMwMzA5ZTdmOGY0NWIxNmY2ZjljOTU0YzhmZTE2NTQ4ZTBlMDUyODBiOGNhZTQwOWNlYjliN2VhIiwidGFnIjoiIn0%3D; postsyncer_session_v2=eyJpdiI6IlBScjNveWNNZENSMkxlOVpSSWQzb2c9PSIsInZhbHVlIjoiZU1DcE5Rd1hKZVBSbkMzWVV5T3k5ZWJYeitCalgzR1NKcWE1cnRINnJvcmFBdGVSdGx0dXg0V1g4YXY3Y2JweHZJM2ZJejJuUHppbFBvSXBQRE9tWjZMSjhVRGhDd0hnQ2c2d3ZaTEVad1pUb2FncVE0RkZzakJ5L0RqTmlIanciLCJtYWMiOiI5ZDVjMzkzNTE2YTY1MzU5M2VkNGNkYTJmYWUyNWZlMTM4ZWYzODgwODkzNzk5ZTRjNjZjMDBmY2JlMWM4MzUwIiwidGFnIjoiIn0%3D',
+            'origin': 'https://postsyncer.com',
             'pragma': 'no-cache',
             'priority': 'u=1, i',
-            'referer': 'https://vidfly.ai/',
+            'referer': 'https://postsyncer.com/tools/youtube-video-downloader',
             'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
             'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-site',
+            'sec-fetch-site': 'same-origin',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-            'x-app-name': 'vidfly-web',
-            'x-app-version': '1.0.0'
+            'x-csrf-token': 'TEKzaBQgwZlh9fciF7MnaF6G4VFUJfCr2gNM5Gph'
         }
         
-        print(f"🔄 Vidfly.ai API'ye video için istek atılıyor...")
-        response = requests.get(api_url, headers=headers, timeout=30, verify=False)
+        payload = {
+            "url": video_url,
+            "platform": "youtube"
+        }
+        
+        print(f"🔄 PostSyncer.com API'ye istek atılıyor...")
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30, verify=False)
         
         if response.status_code != 200:
             return None, f"API hatası: {response.status_code}"
         
         data = response.json()
         
-        if data.get('code') != 0:
+        if data.get('error'):
             return None, f"API yanıt hatası: {data}"
         
-        items = data.get('data', {}).get('items', [])
-        title = data.get('data', {}).get('title', 'Unknown')
+        title = data.get('title', 'Unknown')
+        videos = data.get('medias', {}).get('videos', [])
+        audios = data.get('medias', {}).get('audio', [])
         
-        # 720p video bul (sadece video track)
+        # En iyi video kalitesini bul (720p veya 1080p MP4)
         video_url = None
-        for item in items:
-            if item.get('ext') == 'mp4' and item.get('height') == 720:
-                video_url = item.get('url')
-                break
+        best_quality = 0
+        
+        for video in videos:
+            if video.get('extension') == 'mp4' and not video.get('has_no_audio', True):
+                height = video.get('height', 0)
+                # 720p veya 1080p tercih et
+                if height in [720, 1080] and height > best_quality:
+                    video_url = video.get('url')
+                    best_quality = height
+        
+        # Eğer 720p/1080p bulunamazsa, en yüksek kaliteyi al
+        if not video_url:
+            for video in videos:
+                if video.get('extension') == 'mp4':
+                    height = video.get('height', 0)
+                    if height > best_quality:
+                        video_url = video.get('url')
+                        best_quality = height
         
         if not video_url:
-            # Mevcut çözünürlükleri logla
-            available_resolutions = []
-            for item in items:
-                if item.get('ext') == 'mp4':
-                    res_type = item.get('type', 'unknown')
-                    available_resolutions.append(f"{item.get('height')}p ({res_type})")
-            return None, f"720p video bulunamadı. Mevcut: {', '.join(available_resolutions)}"
+            available_qualities = [f"{v.get('height')}p {v.get('extension')}" for v in videos]
+            return None, f"Uygun video bulunamadı. Mevcut: {', '.join(available_qualities)}"
         
-        print(f"✅ Video linki alındı (Vidfly.ai)")
+        print(f"✅ Video: {best_quality}p MP4")
         return {
             'video_url': video_url,
             'title': title,
-            'resolution': '720p'
+            'resolution': f'{best_quality}p'
         }, None
         
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
 def get_video_urls(video_id):
-    """Video URL'lerini al (hibrit: video Vidfly'dan, ses TurboScribe'dan)"""
+    """Video URL'lerini al (PostSyncer'dan video, TurboScribe'dan audio)"""
     try:
-        # Video'yu Vidfly.ai'den al
-        video_info, video_error = get_video_from_vidfly(video_id)
+        # PostSyncer.com'dan video al
+        video_info, video_error = get_video_from_postsyncer(video_id)
         if video_error:
-            print(f"❌ Video hatası: {video_error}")
+            print(f"❌ PostSyncer video hatası: {video_error}")
             return {"success": False, "error": video_error}
         
-        # Ses'i TurboScribe.ai'den al
+        # TurboScribe.ai'den audio al
         audio_info, audio_error = get_audio_from_turboscribe(video_id)
         if audio_error:
-            print(f"❌ Audio hatası: {audio_error}")
+            print(f"❌ TurboScribe audio hatası: {audio_error}")
             return {"success": False, "error": audio_error}
         
         return {
             "success": True,
             "video_url": video_info['video_url'],
             "audio_url": audio_info['audio_url'],
-            "title": video_info['title'],  # Vidfly'dan başlık al
+            "title": video_info['title'],  # PostSyncer'dan başlık
             "resolution": video_info['resolution']
         }
             
@@ -277,18 +291,29 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         print(f"✂️ Kesit oluşturuluyor: {start}s - {end}s (video: {video_id})")
         duration = end - start
         
-        # ARM64 Linux kontrolü
+        # Platform kontrolü - ARM64 veya Windows için indirme modu
         import platform
         is_arm64 = platform.machine() in ['aarch64', 'arm64']
+        is_windows = platform.system() == 'Windows'
+        use_download_mode = is_arm64 or is_windows  # Her iki durumda da indir
         
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
         
-        if is_arm64:
-            print(f"🔧 ARM64 tespit edildi - curl indirme modu aktif")
+        if use_download_mode:
+            if is_windows:
+                print(f"🔧 Windows tespit edildi - indirme modu aktif")
+            else:
+                print(f"🔧 ARM64 tespit edildi - indirme modu aktif")
             
             # Geçici dosya isimleri
-            temp_video = f"/tmp/{video_id}_v_{start}_{end}.mp4"
-            temp_audio = f"/tmp/{video_id}_a_{start}_{end}.m4a"
+            if is_windows:
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                temp_video = os.path.join(temp_dir, f"{video_id}_v_{start}_{end}.mp4")
+                temp_audio = os.path.join(temp_dir, f"{video_id}_a_{start}_{end}.m4a")
+            else:
+                temp_video = f"/tmp/{video_id}_v_{start}_{end}.mp4"
+                temp_audio = f"/tmp/{video_id}_a_{start}_{end}.m4a"
             
             # 1. Video indir (Python requests ile)
             print(f"📥 Video indiriliyor...")
@@ -348,43 +373,53 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
             
             print(f"✅ Video: {os.path.getsize(temp_video)} bytes, Audio: {os.path.getsize(temp_audio)} bytes")
             
-            # 3. Local dosyalardan FFmpeg ile kes
+            # 3. Local dosyalardan FFmpeg ile kes (ses senkronizasyonu için)
             cmd = [
-                "ffmpeg",
-                "-ss", str(start),
-                "-i", temp_video,
-                "-ss", str(start),
-                "-i", temp_audio,
-                "-t", str(duration),
-                "-map", "0:v", "-map", "1:a",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart", "-y", output_path
-            ]
+                 "ffmpeg",
+                 "-ss", str(start),
+                 "-i", temp_video,
+                 "-ss", str(start),
+                 "-i", temp_audio,
+                 "-t", str(duration),
+                 "-map", "0:v", "-map", "1:a",
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                 "-af", "asetpts=PTS-STARTPTS",  # Audio timestamp sıfırla
+                 "-vf", "setpts=PTS-STARTPTS",   # Video timestamp sıfırla
+                 "-async", "1",                  # Audio senkronizasyon
+                 "-vsync", "cfr",                # Video frame rate sabit
+                 "-avoid_negative_ts", "make_zero",  # Negatif timestamp'leri sıfırla
+                 "-movflags", "+faststart", "-y", output_path
+             ]
         else:
             print(f"🔧 Standart platform - direkt URL modu")
             # Diğer platformlar için direkt URL
             cmd = [
-                "ffmpeg",
-                "-user_agent", user_agent,
-                "-referer", "https://vidfly.ai/",
-                "-ss", str(start),
-                "-i", video_url,
-                "-user_agent", user_agent,
-                "-referer", "https://turboscribe.ai/",
-                "-ss", str(start),
-                "-i", audio_url,
-                "-t", str(duration),
-                "-map", "0:v", "-map", "1:a",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart", "-y", output_path
-            ]
+                 "ffmpeg",
+                 "-user_agent", user_agent,
+                 "-referer", "https://postsyncer.com/",
+                 "-ss", str(start),
+                 "-i", video_url,
+                 "-user_agent", user_agent,
+                 "-referer", "https://turboscribe.ai/",
+                 "-ss", str(start),
+                 "-i", audio_url,
+                 "-t", str(duration),
+                 "-map", "0:v", "-map", "1:a",
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                 "-af", "asetpts=PTS-STARTPTS",  # Audio timestamp sıfırla
+                 "-vf", "setpts=PTS-STARTPTS",   # Video timestamp sıfırla
+                 "-async", "1",                  # Audio senkronizasyon
+                 "-vsync", "cfr",                # Video frame rate sabit
+                 "-avoid_negative_ts", "make_zero",  # Negatif timestamp'leri sıfırla
+                 "-movflags", "+faststart", "-y", output_path
+             ]
         
         # FFmpeg'i çalıştır
         print(f"🔄 FFmpeg başlatılıyor...")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
-        # Geçici dosyaları temizle (ARM64 modu)
-        if is_arm64:
+        # Geçici dosyaları temizle (indirme modu)
+        if use_download_mode:
             try:
                 if temp_video and os.path.exists(temp_video):
                     os.remove(temp_video)
