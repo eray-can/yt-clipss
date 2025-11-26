@@ -96,13 +96,49 @@ def get_audio_from_turboscribe(video_id):
         title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', html_content)
         title = title_match.group(1) if title_match else 'Unknown'
         
-        # Sadece audio URL'ini çıkar
+        # Audio URL'ini çıkar - farklı itag'leri dene
+        audio_url = None
+        
+        # Önce itag=140 (m4a 128kbps) dene
         audio_url_match = re.search(r'href="([^"]*videoplayback[^"]*itag=140[^"]*)"', html_content)
+        if audio_url_match:
+            audio_url = audio_url_match.group(1).replace('&amp;', '&')
+            print(f"✅ Audio bulundu: itag=140 (m4a 128kbps)")
+        else:
+            # itag=139 (m4a 48kbps) dene
+            audio_url_match = re.search(r'href="([^"]*videoplayback[^"]*itag=139[^"]*)"', html_content)
+            if audio_url_match:
+                audio_url = audio_url_match.group(1).replace('&amp;', '&')
+                print(f"✅ Audio bulundu: itag=139 (m4a 48kbps)")
+            else:
+                # itag=251 (webm opus) dene
+                audio_url_match = re.search(r'href="([^"]*videoplayback[^"]*itag=251[^"]*)"', html_content)
+                if audio_url_match:
+                    audio_url = audio_url_match.group(1).replace('&amp;', '&')
+                    print(f"✅ Audio bulundu: itag=251 (webm opus)")
         
-        if not audio_url_match:
-            return None, "Audio URL bulunamadı (itag=140)"
-        
-        audio_url = audio_url_match.group(1).replace('&amp;', '&')
+        if not audio_url:
+            # Alternatif arama - herhangi bir audio URL'i bul
+            print(f"🔍 Alternatif audio arama yapılıyor...")
+            
+            # Genel audio URL arama
+            general_audio_matches = re.findall(r'href="([^"]*googlevideo\.com[^"]*mime=audio[^"]*)"', html_content)
+            if general_audio_matches:
+                audio_url = general_audio_matches[0].replace('&amp;', '&')
+                print(f"✅ Genel audio URL bulundu")
+            else:
+                # Son çare: herhangi bir videoplayback URL'i
+                all_matches = re.findall(r'href="([^"]*videoplayback[^"]*)"', html_content)
+                audio_candidates = [url for url in all_matches if 'mime=audio' in url or any(tag in url for tag in ['itag=140', 'itag=139', 'itag=251'])]
+                
+                if audio_candidates:
+                    audio_url = audio_candidates[0].replace('&amp;', '&')
+                    print(f"✅ Audio candidate bulundu")
+                else:
+                    # Debug için HTML'in bir kısmını logla
+                    html_preview = html_content[:1000] if len(html_content) > 1000 else html_content
+                    print(f"🔍 HTML preview: {html_preview}")
+                    return None, f"Hiçbir audio URL bulunamadı. HTML uzunluğu: {len(html_content)}"
         
         print(f"✅ Audio linki alındı (TurboScribe.ai)")
         return {
