@@ -9,6 +9,10 @@ import threading
 import uuid
 from datetime import datetime
 import json
+import urllib3
+
+# SSL uyarılarını bastır
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
@@ -44,8 +48,73 @@ def generate_clip_filename(video_id, start, end):
     """Dosya adı oluştur: videoID-start-end.mp4"""
     return f"{video_id}-{start}-{end}.mp4"
 
-def get_video_download_url(video_id):
-    """Vidfly.ai API'den video indirme linkini al"""
+def get_audio_from_turboscribe(video_id):
+    """TurboScribe.ai'den sadece ses linkini al"""
+    try:
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        # TurboScribe.ai API endpoint'i
+        api_url = "https://turboscribe.ai/_htmx/NCN20gAEkZMBzQPXkQc"
+        
+        headers = {
+            'Accept': '*/*',
+            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Content-Type': 'application/json',
+            'Cookie': 'webp=1797256741161; avif=1797256741161; snowflake=95gnirLz7bCR2kB0Dt8ngg%3D%3D; lev=1; screen-width=3440; screen-height=1440; device-pixel-ratio=1; time-zone=Europe%2FIstanbul; js=1; device-token=oAyZHBNdLqTjpZ4yCou3N2af; _gcl_au=1.1.2035078395.1762696717; _ga=GA1.1.566270759.1762696717; _fbp=fb.1.1762696716933.482611337420647145; FPID=FPID2.2.i3BDLW5hKAoCqGaYAFQnmjZCu1qBRg7uEXUZ53RihzQ%3D.1762696717; FPAU=1.1.2035078395.1762696717; i18n-activated-languages=en%2Ctr; window-height=1271; _rdt_uuid=1762696716620.f2dd5fd5-a7ba-4d4a-923d-d2a45f2a3a31; session-secret=b3bec4b0de969c6607d9a1f4b32e589b6103; FPLC=kXlkQ8Zh%2F2uQ%2FQR4b8m7KpaBmRcX0aL97C83aFCmUNU1QoeuX6VmBUQ%2BWkRBZYLbuNF3yOLXVrF7tn4PryfnfeYUi2w7YuDcxaWt7EyHWMeY0bDG17NKoh%2FoNqQR0w%3D%3D; window-width=1260; _uetsid=a336f2b0ca3e11f09aae2f6bb5649835; _uetvid=2ffba9b0bd7411f099f6e713043f5551; _ga_LCTR22QQ87=GS2.1.s1764103082$o3$g1$t1764103139$j3$l0$h1585645753; fingerprint=1RA5lIj7xu4-8DJ5SVzGP-99bj_hs9u5TiTrWK2moT2BeXqoAASRnQOTCM4AnZA9znlAAACTCM4AcCQKzkzgAACTCM4Acmd8zhPAAACTCM4AjySCzlnAAACTCM4DG3AZzmIAAACTCM4CcSjFzmUgAACTCM4DMjx-zi6AAACTCM4Ah2lVzj0AAACTCM4DKVrgzkLAAACTCM4AaV_wzkTgAACTCM4Dctn-zk8AAACTCM4DxMZpzg6gAAA',
+            'Origin': 'https://turboscribe.ai',
+            'Pragma': 'no-cache',
+            'Referer': 'https://turboscribe.ai/downloader/youtube/mp4',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'X-Turbolinks-Loaded': '',
+            'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'x-lev-xhr': ''
+        }
+        
+        # POST data
+        post_data = {
+            "url": video_url
+        }
+        
+        print(f"🔄 TurboScribe.ai API'ye istek atılıyor...")
+        response = requests.post(api_url, headers=headers, json=post_data, timeout=30, verify=False)
+        
+        if response.status_code != 200:
+            return None, f"API hatası: {response.status_code}"
+        
+        # HTML yanıtını parse et
+        html_content = response.text
+        
+        # Başlığı çıkar
+        import re
+        title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', html_content)
+        title = title_match.group(1) if title_match else 'Unknown'
+        
+        # Sadece audio URL'ini çıkar
+        audio_url_match = re.search(r'href="([^"]*videoplayback[^"]*itag=140[^"]*)"', html_content)
+        
+        if not audio_url_match:
+            return None, "Audio URL bulunamadı (itag=140)"
+        
+        audio_url = audio_url_match.group(1).replace('&amp;', '&')
+        
+        print(f"✅ Audio linki alındı (TurboScribe.ai)")
+        return {
+            'audio_url': audio_url,
+            'title': title
+        }, None
+        
+    except Exception as e:
+        return None, f"Hata: {str(e)}"
+
+def get_video_from_vidfly(video_id):
+    """Vidfly.ai API'den sadece video linkini al"""
     try:
         video_url = f"https://www.youtube.com/watch?v={video_id}"
         encoded_url = quote(video_url, safe='')
@@ -55,15 +124,25 @@ def get_video_download_url(video_id):
         headers = {
             'accept': '*/*',
             'accept-language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'cache-control': 'no-cache',
+            'content-type': 'application/json',
             'origin': 'https://vidfly.ai',
+            'pragma': 'no-cache',
+            'priority': 'u=1, i',
             'referer': 'https://vidfly.ai/',
+            'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
             'x-app-name': 'vidfly-web',
             'x-app-version': '1.0.0'
         }
         
-        print(f"🔄 Vidfly.ai API'ye istek atılıyor...")
-        response = requests.get(api_url, headers=headers, timeout=30)
+        print(f"🔄 Vidfly.ai API'ye video için istek atılıyor...")
+        response = requests.get(api_url, headers=headers, timeout=30, verify=False)
         
         if response.status_code != 200:
             return None, f"API hatası: {response.status_code}"
@@ -92,20 +171,9 @@ def get_video_download_url(video_id):
                     available_resolutions.append(f"{item.get('height')}p ({res_type})")
             return None, f"720p video bulunamadı. Mevcut: {', '.join(available_resolutions)}"
         
-        # En iyi audio track'i bul (m4a 131kb/s)
-        audio_url = None
-        for item in items:
-            if item.get('ext') == 'm4a' and item.get('type') == 'audio':
-                audio_url = item.get('url')
-                break
-        
-        if not audio_url:
-            return None, "Audio track bulunamadı"
-        
-        print(f"✅ 720p video + audio linki alındı")
+        print(f"✅ Video linki alındı (Vidfly.ai)")
         return {
             'video_url': video_url,
-            'audio_url': audio_url,
             'title': title,
             'resolution': '720p'
         }, None
@@ -114,20 +182,25 @@ def get_video_download_url(video_id):
         return None, f"Hata: {str(e)}"
 
 def get_video_urls(video_id):
-    """Video URL'lerini al (indirme yapmadan)"""
+    """Video URL'lerini al (hibrit: video Vidfly'dan, ses TurboScribe'dan)"""
     try:
-        # Video indirme linkini al
-        video_info, error = get_video_download_url(video_id)
+        # Video'yu Vidfly.ai'den al
+        video_info, video_error = get_video_from_vidfly(video_id)
+        if video_error:
+            print(f"❌ Video hatası: {video_error}")
+            return {"success": False, "error": video_error}
         
-        if error:
-            print(f"❌ {error}")
-            return {"success": False, "error": error}
+        # Ses'i TurboScribe.ai'den al
+        audio_info, audio_error = get_audio_from_turboscribe(video_id)
+        if audio_error:
+            print(f"❌ Audio hatası: {audio_error}")
+            return {"success": False, "error": audio_error}
         
         return {
             "success": True,
             "video_url": video_info['video_url'],
-            "audio_url": video_info['audio_url'],
-            "title": video_info['title'],
+            "audio_url": audio_info['audio_url'],
+            "title": video_info['title'],  # Vidfly'dan başlık al
             "resolution": video_info['resolution']
         }
             
@@ -137,7 +210,7 @@ def get_video_urls(video_id):
         return {"success": False, "error": error_msg}
 
 def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution):
-    """URL'den direkt kesit oluştur"""
+    """URL'den direkt kesit oluştur (eski sistem)"""
     output_path = None
     try:
         output_file = generate_clip_filename(video_id, start, end)
@@ -159,32 +232,33 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
                     }
                 }
             else:
-                # Boş dosya varsa sil ve yeniden oluştur
                 print(f"⚠️ Boş dosya bulundu, siliniyor: {output_file}")
                 os.remove(output_path)
         
         print(f"✂️ Kesit oluşturuluyor: {start}s - {end}s (video: {video_id})")
         duration = end - start
         
-        # URL'den direkt kes (optimize edilmiş + audio senkronizasyonu)
-        # Hibrit yaklaşım: Video copy (hızlı) + Audio encode (senkronizasyon)
-        # -ss'yi input'tan önce koy ama audio'yu özel işle
+        # User-Agent ve header'lar ile FFmpeg komutu
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+        
         cmd = [
             "ffmpeg",
-            "-ss", str(start),          # Video için hızlı seek
-            "-i", video_url,
-            "-ss", str(start),          # Audio için seek
-            "-i", audio_url,
-            "-t", str(duration),
-            "-map", "0:v:0",            # Video stream
-            "-map", "1:a:0",            # Audio stream
-            "-c:v", "copy",             # Video copy (hızlı, kalite kaybı yok)
-            "-c:a", "aac",              # Audio encode (senkronizasyon için)
-            "-b:a", "192k",             # Audio bitrate
-            "-af", "asetpts=PTS-STARTPTS", # Audio timestamp'i sıfırla
-            "-video_track_timescale", "90000", # Video timescale
-            "-movflags", "+faststart",  # Web için optimize et
-            "-y",
+            "-user_agent", user_agent,  # User-Agent
+            "-referer", "https://vidfly.ai/",  # Referer
+            "-ss", str(start),          # Başlangıç zamanı
+            "-i", video_url,            # Video input (URL)
+            "-user_agent", user_agent,  # Audio için User-Agent
+            "-referer", "https://turboscribe.ai/",  # Audio için Referer
+            "-ss", str(start),          # Audio için başlangıç zamanı
+            "-i", audio_url,            # Audio input (URL)
+            "-t", str(duration),        # Süre
+            "-map", "0:v",              # Video stream
+            "-map", "1:a",              # Audio stream
+            "-c:v", "copy",             # Video copy
+            "-c:a", "aac",              # Audio codec
+            "-b:a", "128k",             # Audio bitrate
+            "-movflags", "+faststart",  # Web için optimize
+            "-y",                       # Üzerine yaz
             output_path
         ]
         
@@ -194,12 +268,36 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         
         # FFmpeg stderr'ini her zaman logla (hata olsa da olmasa da)
         if result.stderr:
-            stderr_preview = result.stderr[:500] if len(result.stderr) > 500 else result.stderr
+            stderr_preview = result.stderr[:1000] if len(result.stderr) > 1000 else result.stderr
             print(f"📋 FFmpeg log: {stderr_preview}")
         
         if result.returncode != 0:
-            error_msg = f"FFmpeg hatası (code {result.returncode}): {result.stderr[:200]}"
+            # Daha detaylı hata analizi
+            error_details = result.stderr if result.stderr else "Bilinmeyen FFmpeg hatası"
+            
+            # Daha detaylı hata analizi
+            if "Invalid data found when processing input" in error_details:
+                error_msg = f"FFmpeg hatası: Video/audio stream'e erişilemiyor. URL'ler geçersiz olabilir. Detay: {error_details[:300]}"
+            elif "Connection refused" in error_details or "HTTP error" in error_details:
+                error_msg = f"FFmpeg hatası: URL'lere bağlanılamıyor. Network sorunu olabilir. Detay: {error_details[:300]}"
+            elif "No such file or directory" in error_details:
+                error_msg = f"FFmpeg hatası: Input dosyası bulunamıyor. Detay: {error_details[:300]}"
+            elif "SSL" in error_details or "certificate" in error_details:
+                error_msg = f"FFmpeg hatası: SSL sertifika sorunu. Detay: {error_details[:300]}"
+            elif "403" in error_details or "Forbidden" in error_details:
+                error_msg = f"FFmpeg hatası: URL'lere erişim reddedildi (403). Detay: {error_details[:300]}"
+            elif "404" in error_details or "Not Found" in error_details:
+                error_msg = f"FFmpeg hatası: URL bulunamadı (404). Detay: {error_details[:300]}"
+            elif "timeout" in error_details.lower() or "timed out" in error_details.lower():
+                error_msg = f"FFmpeg hatası: Bağlantı zaman aşımı. Detay: {error_details[:300]}"
+            else:
+                # Tam hata mesajını göster
+                error_msg = f"FFmpeg hatası (code {result.returncode}): {error_details[:800]}"
+            
             print(f"❌ {error_msg}")
+            print(f"🔍 Kullanılan video URL: {video_url[:100]}...")
+            print(f"🔍 Kullanılan audio URL: {audio_url[:100]}...")
+            
             # Hatalı dosyayı temizle
             if output_path and os.path.exists(output_path):
                 try:
@@ -237,25 +335,33 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         }
     
     except subprocess.TimeoutExpired:
-        error_msg = f"FFmpeg timeout (>5 dakika): {start}s - {end}s"
+        error_msg = f"İşlem timeout (>5 dakika): {start}s - {end}s"
         print(f"❌ {error_msg}")
-        # Timeout durumunda dosyayı temizle
-        if output_path and os.path.exists(output_path):
-            try:
+        # Timeout durumunda dosyaları temizle
+        try:
+            if output_path and os.path.exists(output_path):
                 os.remove(output_path)
-            except:
-                pass
+            if temp_video and os.path.exists(temp_video):
+                os.remove(temp_video)
+            if temp_audio and os.path.exists(temp_audio):
+                os.remove(temp_audio)
+        except:
+            pass
         return {"success": False, "error": error_msg}
             
     except Exception as e:
         error_msg = f"Hata: {str(e)}"
         print(f"❌ {error_msg}")
-        # Hata durumunda dosyayı temizle
-        if output_path and os.path.exists(output_path):
-            try:
+        # Hata durumunda dosyaları temizle
+        try:
+            if output_path and os.path.exists(output_path):
                 os.remove(output_path)
-            except:
-                pass
+            if temp_video and os.path.exists(temp_video):
+                os.remove(temp_video)
+            if temp_audio and os.path.exists(temp_audio):
+                os.remove(temp_audio)
+        except:
+            pass
         return {"success": False, "error": error_msg}
 
 def cleanup_job(job_id):
@@ -516,149 +622,6 @@ def list_clips():
         'total': len(clips)
     })
 
-@app.route('/api/clips/<filename>', methods=['DELETE'])
-def delete_clip(filename):
-    """Belirli bir kesiti sil"""
-    try:
-        file_path = os.path.join(CLIPS_FOLDER, filename)
-        
-        if not os.path.exists(file_path):
-            return jsonify({
-                'success': False,
-                'error': 'Dosya bulunamadı'
-            }), 404
-        
-        os.remove(file_path)
-        
-        return jsonify({
-            'success': True,
-            'message': f'{filename} silindi'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/clips/all', methods=['DELETE'])
-def delete_all_clips():
-    """Tüm kesitleri sil"""
-    try:
-        deleted_count = 0
-        errors = []
-        
-        for filename in os.listdir(CLIPS_FOLDER):
-            if filename.endswith('.mp4'):
-                try:
-                    file_path = os.path.join(CLIPS_FOLDER, filename)
-                    os.remove(file_path)
-                    deleted_count += 1
-                except Exception as e:
-                    errors.append({
-                        'filename': filename,
-                        'error': str(e)
-                    })
-        
-        return jsonify({
-            'success': True,
-            'deleted_count': deleted_count,
-            'errors': errors if errors else None
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/jobs', methods=['GET'])
-def list_jobs():
-    """Tüm job'ları listele"""
-    try:
-        jobs = []
-        for filename in os.listdir(JOBS_FOLDER):
-            if filename.endswith('.json'):
-                job_id = filename.replace('.json', '')
-                job = get_job(job_id)
-                if job:
-                    jobs.append({
-                        'job_id': job_id,
-                        'video_id': job.get('video_id'),
-                        'status': job.get('status'),
-                        'created_at': job.get('created_at'),
-                        'total': job.get('total'),
-                        'processed': job.get('processed')
-                    })
-        
-        return jsonify({
-            'success': True,
-            'jobs': jobs,
-            'total': len(jobs)
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/jobs/<job_id>', methods=['DELETE'])
-def delete_job_endpoint(job_id):
-    """Belirli bir job'u sil"""
-    try:
-        job = get_job(job_id)
-        
-        if not job:
-            return jsonify({
-                'success': False,
-                'error': 'Job bulunamadı'
-            }), 404
-        
-        delete_job(job_id)
-        
-        return jsonify({
-            'success': True,
-            'message': f'Job {job_id} silindi'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/jobs/all', methods=['DELETE'])
-def delete_all_jobs():
-    """Tüm job'ları sil"""
-    try:
-        deleted_count = 0
-        errors = []
-        
-        for filename in os.listdir(JOBS_FOLDER):
-            if filename.endswith('.json'):
-                try:
-                    job_id = filename.replace('.json', '')
-                    delete_job(job_id)
-                    deleted_count += 1
-                except Exception as e:
-                    errors.append({
-                        'job_id': filename.replace('.json', ''),
-                        'error': str(e)
-                    })
-        
-        return jsonify({
-            'success': True,
-            'deleted_count': deleted_count,
-            'errors': errors if errors else None,
-            'message': f'{deleted_count} job silindi'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 @app.route('/')
 def index():
     """API bilgisi"""
@@ -668,13 +631,8 @@ def index():
         'endpoints': {
             'POST /api/create-clips': 'Kesitler oluştur (async, job ID döndürür)',
             'GET /api/check-job/<job_id>': 'Job durumunu kontrol et',
-            'GET /api/jobs': 'Tüm job\'ları listele',
-            'DELETE /api/jobs/<job_id>': 'Belirli bir job\'u sil',
-            'DELETE /api/jobs/all': 'Tüm job\'ları sil',
             'GET /api/clips': 'Mevcut kesitleri listele',
-            'GET /clips/<filename>': 'Kesit dosyasını indir',
-            'DELETE /api/clips/<filename>': 'Belirli bir kesiti sil',
-            'DELETE /api/clips/all': 'Tüm kesitleri sil'
+            'GET /clips/<filename>': 'Kesit dosyasını indir'
         }
     })
 
