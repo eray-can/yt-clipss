@@ -1,0 +1,30 @@
+{
+  "job_id": "9fd13799-45b7-4b9a-8c79-71d93b1da22c",
+  "video_id": "DdDhVqDdAOg",
+  "status": "processing",
+  "created_at": "2025-11-26T21:44:52.859972",
+  "total": 20,
+  "processed": 7,
+  "clip_filenames": [
+    "DdDhVqDdAOg-18.24-60.8.mp4",
+    "DdDhVqDdAOg-63.84-118.4.mp4",
+    "DdDhVqDdAOg-348-407.68.mp4",
+    "DdDhVqDdAOg-406.32-461.44.mp4",
+    "DdDhVqDdAOg-472.08-523.24.mp4",
+    "DdDhVqDdAOg-522.56-582.56.mp4",
+    "DdDhVqDdAOg-581.16-634.mp4",
+    "DdDhVqDdAOg-753.68-808.33.mp4",
+    "DdDhVqDdAOg-816.08-868.59.mp4",
+    "DdDhVqDdAOg-870.12-923.6.mp4",
+    "DdDhVqDdAOg-947.28-1000.48.mp4",
+    "DdDhVqDdAOg-997.2-1052.16.mp4",
+    "DdDhVqDdAOg-1095.44-1155.04.mp4",
+    "DdDhVqDdAOg-1275.95-1335.44.mp4",
+    "DdDhVqDdAOg-1414.28-1471.44.mp4",
+    "DdDhVqDdAOg-1471.52-1527.44.mp4",
+    "DdDhVqDdAOg-1581.84-1640.64.mp4",
+    "DdDhVqDdAOg-1640.84-1699.44.mp4",
+    "DdDhVqDdAOg-1699.04-1757.6.mp4",
+    "DdDhVqDdAOg-1812.84-1871.92.mp4"
+  ]
+}

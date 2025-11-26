@@ -210,8 +210,11 @@ def get_video_urls(video_id):
         return {"success": False, "error": error_msg}
 
 def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution):
-    """URL'den direkt kesit oluştur (eski sistem)"""
+    """Kesit oluştur - ARM64 için curl, diğerleri için direkt URL"""
     output_path = None
+    temp_video = None
+    temp_audio = None
+    
     try:
         output_file = generate_clip_filename(video_id, start, end)
         output_path = os.path.join(CLIPS_FOLDER, output_file)
@@ -238,33 +241,123 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         print(f"✂️ Kesit oluşturuluyor: {start}s - {end}s (video: {video_id})")
         duration = end - start
         
-        # User-Agent ve header'lar ile FFmpeg komutu
+        # ARM64 Linux kontrolü
+        import platform
+        is_arm64 = platform.machine() in ['aarch64', 'arm64']
+        
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
         
-        cmd = [
-            "ffmpeg",
-            "-user_agent", user_agent,  # User-Agent
-            "-referer", "https://vidfly.ai/",  # Referer
-            "-ss", str(start),          # Başlangıç zamanı
-            "-i", video_url,            # Video input (URL)
-            "-user_agent", user_agent,  # Audio için User-Agent
-            "-referer", "https://turboscribe.ai/",  # Audio için Referer
-            "-ss", str(start),          # Audio için başlangıç zamanı
-            "-i", audio_url,            # Audio input (URL)
-            "-t", str(duration),        # Süre
-            "-map", "0:v",              # Video stream
-            "-map", "1:a",              # Audio stream
-            "-c:v", "copy",             # Video copy
-            "-c:a", "aac",              # Audio codec
-            "-b:a", "128k",             # Audio bitrate
-            "-movflags", "+faststart",  # Web için optimize
-            "-y",                       # Üzerine yaz
-            output_path
-        ]
+        if is_arm64:
+            print(f"🔧 ARM64 tespit edildi - curl indirme modu aktif")
+            
+            # Geçici dosya isimleri
+            temp_video = f"/tmp/{video_id}_v_{start}_{end}.mp4"
+            temp_audio = f"/tmp/{video_id}_a_{start}_{end}.m4a"
+            
+            # 1. Video indir (Python requests ile)
+            print(f"📥 Video indiriliyor...")
+            
+            try:
+                headers = {
+                    'User-Agent': user_agent,
+                    'Referer': 'https://vidfly.ai/'
+                }
+                
+                response = requests.get(video_url, headers=headers, stream=True, verify=False, timeout=180)
+                response.raise_for_status()
+                
+                with open(temp_video, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                print(f"✅ Video indirildi: {os.path.getsize(temp_video)} bytes")
+                
+            except Exception as e:
+                error_msg = f"Video indirme hatası: {str(e)[:200]}"
+                print(f"❌ {error_msg}")
+                return {"success": False, "error": error_msg}
+            
+            # Video dosya boyutu kontrol
+            if not os.path.exists(temp_video) or os.path.getsize(temp_video) < 1000:
+                return {"success": False, "error": "Video dosyası indirilemedi veya çok küçük"}
+            
+            # 2. Audio indir (Python requests ile)
+            print(f"📥 Audio indiriliyor...")
+            
+            try:
+                headers = {
+                    'User-Agent': user_agent,
+                    'Referer': 'https://turboscribe.ai/'
+                }
+                
+                response = requests.get(audio_url, headers=headers, stream=True, verify=False, timeout=180)
+                response.raise_for_status()
+                
+                with open(temp_audio, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                print(f"✅ Audio indirildi: {os.path.getsize(temp_audio)} bytes")
+                
+            except Exception as e:
+                error_msg = f"Audio indirme hatası: {str(e)[:200]}"
+                print(f"❌ {error_msg}")
+                return {"success": False, "error": error_msg}
+            
+            # Audio dosya boyutu kontrol
+            if not os.path.exists(temp_audio) or os.path.getsize(temp_audio) < 1000:
+                return {"success": False, "error": "Audio dosyası indirilemedi veya çok küçük"}
+            
+            print(f"✅ Video: {os.path.getsize(temp_video)} bytes, Audio: {os.path.getsize(temp_audio)} bytes")
+            
+            # 3. Local dosyalardan FFmpeg ile kes
+            cmd = [
+                "ffmpeg",
+                "-ss", str(start),
+                "-i", temp_video,
+                "-ss", str(start),
+                "-i", temp_audio,
+                "-t", str(duration),
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart", "-y", output_path
+            ]
+        else:
+            print(f"🔧 Standart platform - direkt URL modu")
+            # Diğer platformlar için direkt URL
+            cmd = [
+                "ffmpeg",
+                "-user_agent", user_agent,
+                "-referer", "https://vidfly.ai/",
+                "-ss", str(start),
+                "-i", video_url,
+                "-user_agent", user_agent,
+                "-referer", "https://turboscribe.ai/",
+                "-ss", str(start),
+                "-i", audio_url,
+                "-t", str(duration),
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart", "-y", output_path
+            ]
         
-        # FFmpeg'i timeout ile çalıştır (max 5 dakika per clip)
+        # FFmpeg'i çalıştır
         print(f"🔄 FFmpeg başlatılıyor...")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        # Geçici dosyaları temizle (ARM64 modu)
+        if is_arm64:
+            try:
+                if temp_video and os.path.exists(temp_video):
+                    os.remove(temp_video)
+                    print(f"🗑️ Geçici video dosyası silindi")
+                if temp_audio and os.path.exists(temp_audio):
+                    os.remove(temp_audio)
+                    print(f"🗑️ Geçici audio dosyası silindi")
+            except Exception as cleanup_error:
+                print(f"⚠️ Geçici dosya temizleme hatası: {cleanup_error}")
         
         # FFmpeg stderr'ini her zaman logla (hata olsa da olmasa da)
         if result.stderr:
