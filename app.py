@@ -231,27 +231,135 @@ def get_video_from_postsyncer(video_id):
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-def get_video_urls(video_id):
-    """Video URL'lerini al (PostSyncer'dan video, TurboScribe'dan audio)"""
+def get_video_urls_from_vidfly(video_id):
+    """Vidfly.ai API'den video ve audio URL'lerini al"""
     try:
-        # PostSyncer.com'dan video al
-        video_info, video_error = get_video_from_postsyncer(video_id)
-        if video_error:
-            print(f"❌ PostSyncer video hatası: {video_error}")
-            return {"success": False, "error": video_error}
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        api_url = f"https://api.vidfly.ai/api/media/youtube/download?url={quote(video_url)}"
         
-        # TurboScribe.ai'den audio al
-        audio_info, audio_error = get_audio_from_turboscribe(video_id)
-        if audio_error:
-            print(f"❌ TurboScribe audio hatası: {audio_error}")
-            return {"success": False, "error": audio_error}
+        headers = {
+            'Host': 'api.vidfly.ai',
+            'Pragma': 'no-cache',
+            'Cache-Control': 'no-cache',
+            'sec-ch-ua-platform': '"Windows"',
+            'X-App-Version': '1.0.0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'X-App-Name': 'vidfly-web',
+            'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+            'Content-Type': 'application/json',
+            'sec-ch-ua-mobile': '?0',
+            'Accept': '*/*',
+            'Origin': 'https://vidfly.ai',
+            'Sec-Fetch-Site': 'same-site',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+            'Referer': 'https://vidfly.ai/',
+            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+        }
+        
+        print(f"🔄 Vidfly.ai API'ye istek atılıyor...")
+        response = requests.get(api_url, headers=headers, timeout=30, verify=False)
+        
+        if response.status_code != 200:
+            return None, f"API hatası: {response.status_code}"
+        
+        data = response.json()
+        
+        if data.get('code') != 0:
+            return None, f"API yanıt hatası: {data}"
+        
+        result_data = data.get('data', {})
+        title = result_data.get('title', 'Unknown')
+        items = result_data.get('items', [])
+        
+        # En iyi video kalitesini bul (720p MP4 video_with_audio tercih et)
+        video_url = None
+        best_quality = 0
+        
+        # Önce video_with_audio tipinde olanları dene (hem video hem ses var)
+        for item in items:
+            if (item.get('type') == 'video_with_audio' and 
+                item.get('ext') == 'mp4' and 
+                item.get('height', 0) >= 360):
+                height = item.get('height', 0)
+                if height > best_quality:
+                    video_url = item.get('url')
+                    best_quality = height
+        
+        # Eğer video_with_audio bulunamazsa, sadece video tipinde olanları dene
+        if not video_url:
+            for item in items:
+                if (item.get('type') == 'video' and 
+                    item.get('ext') == 'mp4' and 
+                    item.get('height', 0) >= 360):
+                    height = item.get('height', 0)
+                    if height > best_quality:
+                        video_url = item.get('url')
+                        best_quality = height
+        
+        # En iyi audio kalitesini bul (m4a 140kb/s tercih et)
+        audio_url = None
+        best_audio_quality = 0
+        
+        for item in items:
+            if item.get('type') == 'audio':
+                # m4a formatını tercih et
+                if item.get('ext') == 'm4a':
+                    # Label'dan bitrate çıkar (örn: "m4a (139kb/s)")
+                    label = item.get('label', '')
+                    if 'kb/s' in label:
+                        try:
+                            bitrate = int(label.split('(')[1].split('kb/s')[0])
+                            if bitrate > best_audio_quality:
+                                audio_url = item.get('url')
+                                best_audio_quality = bitrate
+                        except:
+                            # Bitrate parse edilemezse yine de al
+                            if not audio_url:
+                                audio_url = item.get('url')
+                                best_audio_quality = 128  # default
+                
+                # Eğer m4a bulunamazsa opus'u dene
+                elif item.get('ext') == 'opus' and not audio_url:
+                    audio_url = item.get('url')
+                    best_audio_quality = 128
+        
+        if not video_url:
+            available_videos = [f"{item.get('height')}p {item.get('ext')} ({item.get('type')})" for item in items if item.get('type') in ['video', 'video_with_audio']]
+            return None, f"Uygun video bulunamadı. Mevcut: {', '.join(available_videos)}"
+        
+        if not audio_url:
+            available_audios = [f"{item.get('ext')} ({item.get('label')})" for item in items if item.get('type') == 'audio']
+            return None, f"Uygun audio bulunamadı. Mevcut: {', '.join(available_audios)}"
+        
+        print(f"✅ Video: {best_quality}p MP4")
+        print(f"✅ Audio: {best_audio_quality}kb/s")
+        
+        return {
+            'video_url': video_url,
+            'audio_url': audio_url,
+            'title': title,
+            'resolution': f'{best_quality}p'
+        }, None
+        
+    except Exception as e:
+        return None, f"Hata: {str(e)}"
+
+def get_video_urls(video_id):
+    """Video URL'lerini al (Vidfly.ai'den hem video hem audio)"""
+    try:
+        # Vidfly.ai'den hem video hem audio al
+        result, error = get_video_urls_from_vidfly(video_id)
+        if error:
+            print(f"❌ Vidfly.ai hatası: {error}")
+            return {"success": False, "error": error}
         
         return {
             "success": True,
-            "video_url": video_info['video_url'],
-            "audio_url": audio_info['audio_url'],
-            "title": video_info['title'],  # PostSyncer'dan başlık
-            "resolution": video_info['resolution']
+            "video_url": result['video_url'],
+            "audio_url": result['audio_url'],
+            "title": result['title'],
+            "resolution": result['resolution']
         }
             
     except Exception as e:
@@ -319,8 +427,18 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
             print(f"📥 Video indiriliyor...")
             
             try:
+                # Vidfly.ai için özel headers
                 headers = {
                     'User-Agent': user_agent,
+                    'Accept': '*/*',
+                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'video',
+                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'cross-site',
+                    'Range': 'bytes=0-',
                     'Referer': 'https://vidfly.ai/'
                 }
                 
@@ -347,9 +465,19 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
             print(f"📥 Audio indiriliyor...")
             
             try:
+                # Audio için Vidfly.ai headers
                 headers = {
                     'User-Agent': user_agent,
-                    'Referer': 'https://turboscribe.ai/'
+                    'Accept': '*/*',
+                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'audio',
+                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'cross-site',
+                    'Range': 'bytes=0-',
+                    'Referer': 'https://vidfly.ai/'
                 }
                 
                 response = requests.get(audio_url, headers=headers, stream=True, verify=False, timeout=180)
@@ -394,15 +522,15 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
             print(f"🔧 Standart platform - direkt URL modu")
             # Diğer platformlar için direkt URL
             cmd = [
-                 "ffmpeg",
-                 "-user_agent", user_agent,
-                 "-referer", "https://postsyncer.com/",
-                 "-ss", str(start),
-                 "-i", video_url,
-                 "-user_agent", user_agent,
-                 "-referer", "https://turboscribe.ai/",
-                 "-ss", str(start),
-                 "-i", audio_url,
+                  "ffmpeg",
+                  "-user_agent", user_agent,
+                  "-referer", "https://vidfly.ai/",
+                  "-ss", str(start),
+                  "-i", video_url,
+                  "-user_agent", user_agent,
+                  "-referer", "https://vidfly.ai/",
+                  "-ss", str(start),
+                  "-i", audio_url,
                  "-t", str(duration),
                  "-map", "0:v", "-map", "1:a",
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
@@ -416,6 +544,7 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         
         # FFmpeg'i çalıştır
         print(f"🔄 FFmpeg başlatılıyor...")
+        print(f"🔧 FFmpeg komutu: {' '.join(cmd[:10])}...")  # İlk 10 parametreyi göster
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
         # Geçici dosyaları temizle (indirme modu)
@@ -432,8 +561,13 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         
         # FFmpeg stderr'ini her zaman logla (hata olsa da olmasa da)
         if result.stderr:
-            stderr_preview = result.stderr[:1000] if len(result.stderr) > 1000 else result.stderr
+            stderr_preview = result.stderr[:2000] if len(result.stderr) > 2000 else result.stderr
             print(f"📋 FFmpeg log: {stderr_preview}")
+        
+        # FFmpeg stdout'u da logla
+        if result.stdout:
+            stdout_preview = result.stdout[:1000] if len(result.stdout) > 1000 else result.stdout
+            print(f"📋 FFmpeg stdout: {stdout_preview}")
         
         if result.returncode != 0:
             # Daha detaylı hata analizi
@@ -528,6 +662,118 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
             pass
         return {"success": False, "error": error_msg}
 
+def cut_clip_from_local_files(temp_video, temp_audio, video_id, start, end, title, resolution):
+    """Local dosyalardan kesit oluştur (optimize edilmiş)"""
+    output_path = None
+    
+    try:
+        output_file = generate_clip_filename(video_id, start, end)
+        output_path = os.path.join(CLIPS_FOLDER, output_file)
+        
+        # Eğer dosya zaten varsa, tekrar kesme
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path)
+            if file_size > 0:
+                print(f"✅ Kesit zaten mevcut: {output_file}")
+                return {
+                    "success": True,
+                    "filename": output_file,
+                    "video_info": {
+                        "title": title,
+                        "resolution": resolution,
+                        "file_size": file_size,
+                        "file_size_mb": round(file_size / (1024 * 1024), 2)
+                    }
+                }
+            else:
+                os.remove(output_path)
+        
+        duration = end - start
+        
+        # Local dosyalardan FFmpeg ile kes (copy codec için filter yok)
+        cmd = [
+            "ffmpeg",
+            "-ss", str(start),
+            "-i", temp_video,
+            "-ss", str(start),
+            "-i", temp_audio,
+            "-t", str(duration),
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "copy",  # Video copy - filter yok
+            "-c:a", "aac", "-b:a", "128k",  # Audio encode - filter olabilir
+            "-avoid_negative_ts", "make_zero",
+            "-movflags", "+faststart", 
+            "-y", output_path
+        ]
+        
+        print(f"🔧 FFmpeg FULL komutu: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        # FFmpeg stderr'ini logla
+        if result.stderr:
+            stderr_preview = result.stderr[:3000] if len(result.stderr) > 3000 else result.stderr
+            print(f"📋 FFmpeg FULL log: {stderr_preview}")
+        
+        # Dosya varlığını kontrol et
+        print(f"🔍 Video dosyası var mı: {os.path.exists(temp_video)} ({temp_video})")
+        print(f"🔍 Audio dosyası var mı: {os.path.exists(temp_audio)} ({temp_audio})")
+        
+        if result.returncode != 0:
+            error_details = result.stderr if result.stderr else "Bilinmeyen FFmpeg hatası"
+            error_msg = f"FFmpeg hatası (code {result.returncode}): {error_details[:500]}"
+            print(f"❌ {error_msg}")
+            
+            if output_path and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except:
+                    pass
+            return {"success": False, "error": error_msg}
+        
+        # Dosya kontrolü
+        if not os.path.exists(output_path):
+            return {"success": False, "error": "Dosya oluşturulamadı"}
+        
+        file_size = os.path.getsize(output_path)
+        if file_size == 0:
+            try:
+                os.remove(output_path)
+            except:
+                pass
+            return {"success": False, "error": "Dosya boş oluşturuldu"}
+        
+        print(f"✅ Kesit oluşturuldu: {output_file} ({round(file_size / (1024 * 1024), 2)} MB)")
+        return {
+            "success": True,
+            "filename": output_file,
+            "video_info": {
+                "title": title,
+                "resolution": resolution,
+                "file_size": file_size,
+                "file_size_mb": round(file_size / (1024 * 1024), 2)
+            }
+        }
+    
+    except subprocess.TimeoutExpired:
+        error_msg = f"FFmpeg timeout: {start}s - {end}s"
+        print(f"❌ {error_msg}")
+        if output_path and os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except:
+                pass
+        return {"success": False, "error": error_msg}
+            
+    except Exception as e:
+        error_msg = f"Hata: {str(e)}"
+        print(f"❌ {error_msg}")
+        if output_path and os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except:
+                pass
+        return {"success": False, "error": error_msg}
+
 def cleanup_job(job_id):
     """Job'u 10 dakika sonra sil"""
     time.sleep(600)  # 10 dakika bekle
@@ -537,8 +783,11 @@ def cleanup_job(job_id):
         delete_job(job_id)
 
 def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, resolution):
-    """Clipleri async olarak işle"""
+    """Clipleri async olarak işle - TEK İNDİRME MANTIGI"""
     job = None
+    temp_video = None
+    temp_audio = None
+    
     try:
         results = []
         errors = []
@@ -556,7 +805,113 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
         
         print(f"🔄 Processing started for job {job_id} with {len(clips)} clips")
         
-        # Tüm clipleri kes
+        # Platform kontrolü
+        import platform
+        is_arm64 = platform.machine() in ['aarch64', 'arm64']
+        is_windows = platform.system() == 'Windows'
+        use_download_mode = is_arm64 or is_windows
+        
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+        
+        if use_download_mode:
+            if is_windows:
+                print(f"🔧 Windows tespit edildi - tek indirme modu")
+            else:
+                print(f"🔧 ARM64 tespit edildi - tek indirme modu")
+            
+            # Geçici dosya isimleri (JOB için tek dosya)
+            if is_windows:
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                temp_video = os.path.join(temp_dir, f"{video_id}_full_video.mp4")
+                temp_audio = os.path.join(temp_dir, f"{video_id}_full_audio.m4a")
+            else:
+                temp_video = f"/tmp/{video_id}_full_video.mp4"
+                temp_audio = f"/tmp/{video_id}_full_audio.m4a"
+            
+            # 1. TEK SEFERLIK VIDEO İNDİR
+            print(f"📥 Tam video indiriliyor... (tek seferlik)")
+            try:
+                headers = {
+                    'User-Agent': user_agent,
+                    'Accept': '*/*',
+                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'video',
+                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'cross-site',
+                    'Range': 'bytes=0-',
+                    'Referer': 'https://vidfly.ai/'
+                }
+                
+                response = requests.get(video_url, headers=headers, stream=True, verify=False, timeout=300)
+                response.raise_for_status()
+                
+                with open(temp_video, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                print(f"✅ Tam video indirildi: {os.path.getsize(temp_video)} bytes")
+                
+            except Exception as e:
+                error_msg = f"Video indirme hatası: {str(e)[:200]}"
+                print(f"❌ {error_msg}")
+                # Tüm job'u failed yap
+                job = get_job(job_id)
+                if job:
+                    job['status'] = 'failed'
+                    job['error'] = error_msg
+                    job['completed_at'] = datetime.now().isoformat()
+                    save_job(job_id, job)
+                return
+            
+            # 2. TEK SEFERLIK AUDIO İNDİR
+            print(f"📥 Tam audio indiriliyor... (tek seferlik)")
+            try:
+                headers = {
+                    'User-Agent': user_agent,
+                    'Accept': '*/*',
+                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'audio',
+                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'cross-site',
+                    'Range': 'bytes=0-',
+                    'Referer': 'https://vidfly.ai/'
+                }
+                
+                response = requests.get(audio_url, headers=headers, stream=True, verify=False, timeout=300)
+                response.raise_for_status()
+                
+                with open(temp_audio, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                print(f"✅ Tam audio indirildi: {os.path.getsize(temp_audio)} bytes")
+                
+            except Exception as e:
+                error_msg = f"Audio indirme hatası: {str(e)[:200]}"
+                print(f"❌ {error_msg}")
+                # Cleanup ve fail
+                if temp_video and os.path.exists(temp_video):
+                    os.remove(temp_video)
+                job = get_job(job_id)
+                if job:
+                    job['status'] = 'failed'
+                    job['error'] = error_msg
+                    job['completed_at'] = datetime.now().isoformat()
+                    save_job(job_id, job)
+                return
+            
+            print(f"🎬 Tüm clipler tek dosyadan kesilecek!")
+        
+        # 3. TÜM CLİPLERİ KES
         for idx, clip in enumerate(clips):
             try:
                 start = clip.get('start')
@@ -570,10 +925,13 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                     })
                     continue
                 
-                print(f"🎬 Processing clip {idx+1}/{len(clips)}: {start}s - {end}s")
+                print(f"✂️ Clip {idx+1}/{len(clips)}: {start}s - {end}s")
                 
-                # Kesit oluştur (URL'den direkt)
-                result = cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution)
+                # Local dosyalardan veya URL'den kes
+                if use_download_mode:
+                    result = cut_clip_from_local_files(temp_video, temp_audio, video_id, start, end, title, resolution)
+                else:
+                    result = cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution)
                 
                 if result.get('success'):
                     filename = result['filename']
@@ -587,7 +945,7 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                         'resolution': video_info.get('resolution'),
                         'file_size_mb': video_info.get('file_size_mb')
                     })
-                    print(f"✅ Clip {idx+1} processed successfully")
+                    print(f"✅ Clip {idx+1} tamamlandı")
                 else:
                     error_msg = result.get('error', 'Bilinmeyen hata')
                     errors.append({
@@ -595,10 +953,9 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                         'error': error_msg,
                         'clip': {'start': start, 'end': end}
                     })
-                    print(f"❌ Clip {idx+1} failed: {error_msg}")
+                    print(f"❌ Clip {idx+1} başarısız: {error_msg}")
                 
             except Exception as clip_error:
-                # Clip işleme hatası - devam et
                 error_msg = f"Clip processing exception: {str(clip_error)}"
                 print(f"❌ {error_msg}")
                 errors.append({
@@ -608,20 +965,32 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                 })
             finally:
                 # Her durumda processed sayısını artır ve kaydet
-                job = get_job(job_id)  # En güncel job'u al
+                job = get_job(job_id)
                 if job:
                     job['processed'] += 1
                     save_job(job_id, job)
         
+        # Geçici dosyaları temizle
+        if use_download_mode:
+            try:
+                if temp_video and os.path.exists(temp_video):
+                    os.remove(temp_video)
+                    print(f"🗑️ Geçici video dosyası silindi")
+                if temp_audio and os.path.exists(temp_audio):
+                    os.remove(temp_audio)
+                    print(f"🗑️ Geçici audio dosyası silindi")
+            except Exception as cleanup_error:
+                print(f"⚠️ Geçici dosya temizleme hatası: {cleanup_error}")
+        
         # Job'u finished olarak işaretle
-        job = get_job(job_id)  # En güncel job'u al
+        job = get_job(job_id)
         if job:
             job['status'] = 'finished'
             job['results'] = results
             job['errors'] = errors
             job['completed_at'] = datetime.now().isoformat()
             save_job(job_id, job)
-            print(f"✅ Job {job_id} completed: {len(results)} clips, {len(errors)} errors")
+            print(f"✅ Job {job_id} tamamlandı: {len(results)} başarılı, {len(errors)} hata")
         
         # 10 dakika sonra job'u sil
         cleanup_thread = threading.Thread(target=cleanup_job, args=(job_id,))
