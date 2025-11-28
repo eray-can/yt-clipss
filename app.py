@@ -1157,17 +1157,82 @@ def list_clips():
         'total': len(clips)
     })
 
+@app.route('/api/clips/<filename>', methods=['DELETE'])
+def delete_clip(filename):
+    """Clip dosyasını sil"""
+    try:
+        # Güvenlik kontrolü - sadece .mp4 dosyaları
+        if not filename.endswith('.mp4'):
+            return jsonify({
+                'success': False,
+                'error': 'Sadece .mp4 dosyaları silinebilir'
+            }), 400
+        
+        file_path = os.path.join(CLIPS_FOLDER, filename)
+        
+        # Dosya var mı kontrol et
+        if not os.path.exists(file_path):
+            return jsonify({
+                'success': False,
+                'error': 'Dosya bulunamadı'
+            }), 404
+        
+        # Dosyayı sil
+        os.remove(file_path)
+        print(f"🗑️ Clip silindi: {filename}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'{filename} başarıyla silindi'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/clips/clear', methods=['DELETE'])
+def clear_all_clips():
+    """Tüm clipleri sil"""
+    try:
+        deleted_count = 0
+        
+        for filename in os.listdir(CLIPS_FOLDER):
+            if filename.endswith('.mp4'):
+                file_path = os.path.join(CLIPS_FOLDER, filename)
+                try:
+                    os.remove(file_path)
+                    deleted_count += 1
+                    print(f"🗑️ Silindi: {filename}")
+                except Exception as e:
+                    print(f"⚠️ Silinemedi {filename}: {e}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'{deleted_count} clip silindi',
+            'deleted_count': deleted_count
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/')
 def index():
     """API bilgisi"""
     return jsonify({
-        'name': 'YouTube Clip API',
-        'version': '2.1',
+        'name': 'YouTube Clip API (Instagram Reels)',
+        'version': '2.2',
         'endpoints': {
             'POST /api/create-clips': 'Kesitler oluştur (async, job ID döndürür)',
             'GET /api/check-job/<job_id>': 'Job durumunu kontrol et',
             'GET /api/clips': 'Mevcut kesitleri listele',
-            'GET /clips/<filename>': 'Kesit dosyasını indir'
+            'GET /clips/<filename>': 'Kesit dosyasını indir',
+            'DELETE /api/clips/<filename>': 'Belirli clip dosyasını sil',
+            'DELETE /api/clips/clear': 'Tüm clipleri sil'
         }
     })
 
