@@ -231,33 +231,33 @@ def get_video_from_postsyncer(video_id):
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
-def get_video_urls_from_vidfly(video_id):
-    """Vidfly.ai API'den video ve audio URL'lerini al"""
+def get_video_urls_from_savenow(video_id):
+    """SaveNow.to API'den video URL'ini al (tek URL - video+audio birlikte)"""
     try:
         video_url = f"https://www.youtube.com/watch?v={video_id}"
-        api_url = f"https://api.vidfly.ai/api/media/youtube/download?url={quote(video_url)}"
+        
+        # 1. İlk istek - download job başlat
+        api_url = f"https://p.savenow.to/ajax/download.php?copyright=0&format=720&url={quote(video_url)}"
         
         headers = {
-            'Host': 'api.vidfly.ai',
-            'Pragma': 'no-cache',
-            'Cache-Control': 'no-cache',
-            'sec-ch-ua-platform': '"Windows"',
-            'X-App-Version': '1.0.0',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-            'X-App-Name': 'vidfly-web',
+            'accept': '*/*',
+            'accept-language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'cache-control': 'no-cache',
+            'origin': 'https://downloaderto.com',
+            'pragma': 'no-cache',
+            'priority': 'u=1, i',
+            'referer': 'https://downloaderto.com/',
             'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
-            'Content-Type': 'application/json',
             'sec-ch-ua-mobile': '?0',
-            'Accept': '*/*',
-            'Origin': 'https://vidfly.ai',
-            'Sec-Fetch-Site': 'same-site',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Dest': 'empty',
-            'Referer': 'https://vidfly.ai/',
-            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'cross-site',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'Cookie': 'loader_session=jca8PUEZIft5WtClNmqEG98lw5nF2Op85vG6SLPg'
         }
         
-        print(f"🔄 Vidfly.ai API'ye istek atılıyor...")
+        print(f"🔄 SaveNow.to API'ye istek atılıyor...")
         response = requests.get(api_url, headers=headers, timeout=30, verify=False)
         
         if response.status_code != 200:
@@ -265,99 +265,105 @@ def get_video_urls_from_vidfly(video_id):
         
         data = response.json()
         
-        if data.get('code') != 0:
+        if not data.get('success'):
             return None, f"API yanıt hatası: {data}"
         
-        result_data = data.get('data', {})
-        title = result_data.get('title', 'Unknown')
-        items = result_data.get('items', [])
+        # Progress URL'ini al
+        progress_url = data.get('progress_url')
+        title = data.get('title', 'Unknown')
         
-        # En iyi video kalitesini bul (720p MP4 video_with_audio tercih et)
-        video_url = None
-        best_quality = 0
+        if not progress_url:
+            return None, "Progress URL bulunamadı"
         
-        # Önce video_with_audio tipinde olanları dene (hem video hem ses var)
-        for item in items:
-            if (item.get('type') == 'video_with_audio' and 
-                item.get('ext') == 'mp4' and 
-                item.get('height', 0) >= 360):
-                height = item.get('height', 0)
-                if height > best_quality:
-                    video_url = item.get('url')
-                    best_quality = height
+        print(f"✅ Job başlatıldı: {data.get('id')}")
+        print(f"📊 Progress URL: {progress_url}")
         
-        # Eğer video_with_audio bulunamazsa, sadece video tipinde olanları dene
-        if not video_url:
-            for item in items:
-                if (item.get('type') == 'video' and 
-                    item.get('ext') == 'mp4' and 
-                    item.get('height', 0) >= 360):
-                    height = item.get('height', 0)
-                    if height > best_quality:
-                        video_url = item.get('url')
-                        best_quality = height
-        
-        # En iyi audio kalitesini bul (m4a 140kb/s tercih et)
-        audio_url = None
-        best_audio_quality = 0
-        
-        for item in items:
-            if item.get('type') == 'audio':
-                # m4a formatını tercih et
-                if item.get('ext') == 'm4a':
-                    # Label'dan bitrate çıkar (örn: "m4a (139kb/s)")
-                    label = item.get('label', '')
-                    if 'kb/s' in label:
-                        try:
-                            bitrate = int(label.split('(')[1].split('kb/s')[0])
-                            if bitrate > best_audio_quality:
-                                audio_url = item.get('url')
-                                best_audio_quality = bitrate
-                        except:
-                            # Bitrate parse edilemezse yine de al
-                            if not audio_url:
-                                audio_url = item.get('url')
-                                best_audio_quality = 128  # default
+        # 2. Progress polling - download tamamlanana kadar bekle
+        max_attempts = 60  # 60 * 5 = 5 dakika max
+        for attempt in range(max_attempts):
+            try:
+                print(f"📊 Progress kontrol ediliyor... ({attempt + 1}/{max_attempts})")
                 
-                # Eğer m4a bulunamazsa opus'u dene
-                elif item.get('ext') == 'opus' and not audio_url:
-                    audio_url = item.get('url')
-                    best_audio_quality = 128
+                progress_response = requests.get(progress_url, headers=headers, timeout=15, verify=False)
+                
+                if progress_response.status_code != 200:
+                    print(f"⚠️ Progress API hatası: {progress_response.status_code}")
+                    time.sleep(5)
+                    continue
+                
+                progress_data = progress_response.json()
+                
+                success = progress_data.get('success', 0)
+                progress = progress_data.get('progress', 0)
+                text = progress_data.get('text', 'Unknown')
+                
+                print(f"📊 Progress: {progress}% - {text}")
+                
+                if success == 1:  # Tamamlandı
+                    download_url = progress_data.get('download_url')
+                    
+                    if not download_url:
+                        # Alternative URLs'i dene
+                        alt_urls = progress_data.get('alternative_download_urls', [])
+                        if alt_urls:
+                            download_url = alt_urls[0].get('url')
+                            print(f"🔄 Alternative URL kullanılıyor: {download_url}")
+                    
+                    if not download_url:
+                        return None, "Download URL bulunamadı"
+                    
+                    print(f"✅ Download hazır: {download_url}")
+                    
+                    return {
+                        'video_url': download_url,
+                        'audio_url': download_url,  # Aynı URL (video+audio birlikte)
+                        'title': title,
+                        'resolution': '720p'
+                    }, None
+                
+                elif success == 0:  # Devam ediyor
+                    if progress >= 1000:  # Bazen success=0 ama progress=1000 oluyor
+                        download_url = progress_data.get('download_url')
+                        if download_url:
+                            print(f"✅ Download hazır (progress=1000): {download_url}")
+                            return {
+                                'video_url': download_url,
+                                'audio_url': download_url,
+                                'title': title,
+                                'resolution': '720p'
+                            }, None
+                    
+                    # Bekle ve tekrar dene
+                    time.sleep(5)
+                    continue
+                
+                else:  # Hata
+                    error_msg = progress_data.get('message', 'Bilinmeyen hata')
+                    return None, f"Progress hatası: {error_msg}"
+                
+            except Exception as progress_error:
+                print(f"⚠️ Progress kontrol hatası: {str(progress_error)}")
+                time.sleep(5)
+                continue
         
-        if not video_url:
-            available_videos = [f"{item.get('height')}p {item.get('ext')} ({item.get('type')})" for item in items if item.get('type') in ['video', 'video_with_audio']]
-            return None, f"Uygun video bulunamadı. Mevcut: {', '.join(available_videos)}"
-        
-        if not audio_url:
-            available_audios = [f"{item.get('ext')} ({item.get('label')})" for item in items if item.get('type') == 'audio']
-            return None, f"Uygun audio bulunamadı. Mevcut: {', '.join(available_audios)}"
-        
-        print(f"✅ Video: {best_quality}p MP4")
-        print(f"✅ Audio: {best_audio_quality}kb/s")
-        
-        return {
-            'video_url': video_url,
-            'audio_url': audio_url,
-            'title': title,
-            'resolution': f'{best_quality}p'
-        }, None
+        return None, "Download timeout - 5 dakika içinde tamamlanamadı"
         
     except Exception as e:
         return None, f"Hata: {str(e)}"
 
 def get_video_urls(video_id):
-    """Video URL'lerini al (Vidfly.ai'den hem video hem audio)"""
+    """Video URL'lerini al (SaveNow.to'dan tek URL - video+audio birlikte)"""
     try:
-        # Vidfly.ai'den hem video hem audio al
-        result, error = get_video_urls_from_vidfly(video_id)
+        # SaveNow.to'dan tek URL al (video+audio birlikte)
+        result, error = get_video_urls_from_savenow(video_id)
         if error:
-            print(f"❌ Vidfly.ai hatası: {error}")
+            print(f"❌ SaveNow.to hatası: {error}")
             return {"success": False, "error": error}
         
         return {
             "success": True,
             "video_url": result['video_url'],
-            "audio_url": result['audio_url'],
+            "audio_url": result['audio_url'],  # Aynı URL
             "title": result['title'],
             "resolution": result['resolution']
         }
@@ -662,8 +668,8 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
             pass
         return {"success": False, "error": error_msg}
 
-def cut_clip_from_local_files(temp_video, temp_audio, video_id, start, end, title, resolution):
-    """Local dosyalardan kesit oluştur (optimize edilmiş)"""
+def cut_clip_from_local_file(temp_file, video_id, start, end, title, resolution):
+    """Local dosyadan kesit oluştur (tek dosya - video+audio birlikte)"""
     output_path = None
     
     try:
@@ -690,33 +696,29 @@ def cut_clip_from_local_files(temp_video, temp_audio, video_id, start, end, titl
         
         duration = end - start
         
-        # Local dosyalardan FFmpeg ile kes (copy codec için filter yok)
+        # Tek dosyadan FFmpeg ile kes (video+audio birlikte)
         cmd = [
             "ffmpeg",
             "-ss", str(start),
-            "-i", temp_video,
-            "-ss", str(start),
-            "-i", temp_audio,
+            "-i", temp_file,
             "-t", str(duration),
-            "-map", "0:v", "-map", "1:a",
-            "-c:v", "copy",  # Video copy - filter yok
-            "-c:a", "aac", "-b:a", "128k",  # Audio encode - filter olabilir
+            "-c:v", "copy",  # Video copy
+            "-c:a", "copy",  # Audio copy (daha hızlı)
             "-avoid_negative_ts", "make_zero",
             "-movflags", "+faststart", 
             "-y", output_path
         ]
         
-        print(f"🔧 FFmpeg FULL komutu: {' '.join(cmd)}")
+        print(f"🔧 FFmpeg komutu: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
         # FFmpeg stderr'ini logla
         if result.stderr:
-            stderr_preview = result.stderr[:3000] if len(result.stderr) > 3000 else result.stderr
-            print(f"📋 FFmpeg FULL log: {stderr_preview}")
+            stderr_preview = result.stderr[:2000] if len(result.stderr) > 2000 else result.stderr
+            print(f"📋 FFmpeg log: {stderr_preview}")
         
         # Dosya varlığını kontrol et
-        print(f"🔍 Video dosyası var mı: {os.path.exists(temp_video)} ({temp_video})")
-        print(f"🔍 Audio dosyası var mı: {os.path.exists(temp_audio)} ({temp_audio})")
+        print(f"🔍 Input dosyası var mı: {os.path.exists(temp_file)} ({temp_file})")
         
         if result.returncode != 0:
             error_details = result.stderr if result.stderr else "Bilinmeyen FFmpeg hatası"
@@ -785,8 +787,7 @@ def cleanup_job(job_id):
 def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, resolution):
     """Clipleri async olarak işle - TEK İNDİRME MANTIGI"""
     job = None
-    temp_video = None
-    temp_audio = None
+    temp_file = None
     
     try:
         results = []
@@ -829,48 +830,39 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
             else:
                 print(f"🔧 ARM64 tespit edildi - tek indirme modu")
             
-            # Geçici dosya isimleri (JOB için tek dosya)
+            # Geçici dosya ismi (JOB için tek dosya - video+audio birlikte)
             if is_windows:
                 import tempfile
                 temp_dir = tempfile.gettempdir()
-                temp_video = os.path.join(temp_dir, f"{video_id}_full_video.mp4")
-                temp_audio = os.path.join(temp_dir, f"{video_id}_full_audio.m4a")
+                temp_file = os.path.join(temp_dir, f"{video_id}_full.mp4")
             else:
-                temp_video = f"/tmp/{video_id}_full_video.mp4"
-                temp_audio = f"/tmp/{video_id}_full_audio.m4a"
+                temp_file = f"/tmp/{video_id}_full.mp4"
             
-            # 1. TEK SEFERLIK VIDEO İNDİR
-            print(f"📥 Tam video indiriliyor... (tek seferlik)")
+            # 1. TEK SEFERLIK DOSYA İNDİR (video+audio birlikte)
+            print(f"📥 Tam dosya indiriliyor... (video+audio birlikte)")
             try:
-                # Güçlü anti-bot headers (sunucu için)
+                # SaveNow.to için headers
                 headers = {
                     'User-Agent': user_agent,
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8',
+                    'Accept': '*/*',
+                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Cache-Control': 'no-cache',
                     'Pragma': 'no-cache',
                     'DNT': '1',
                     'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Sec-Fetch-User': '?1',
-                    'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Linux"',
-                    'X-Forwarded-For': '8.8.8.8',
-                    'X-Real-IP': '8.8.8.8',
-                    'Referer': 'https://www.youtube.com/',
-                    'Origin': 'https://www.youtube.com'
+                    'Sec-Fetch-Dest': 'video',
+                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'cross-site',
+                    'Referer': 'https://downloaderto.com/',
+                    'Origin': 'https://downloaderto.com'
                 }
                 
                 # Güçlü retry mekanizması
                 max_retries = 5
                 for attempt in range(max_retries):
                     try:
-                        print(f"📥 Video indirme denemesi {attempt + 1}/{max_retries}")
+                        print(f"📥 Dosya indirme denemesi {attempt + 1}/{max_retries}")
                         
                         # Her denemede farklı delay
                         if attempt > 0:
@@ -882,6 +874,7 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                         session = requests.Session()
                         session.headers.update(headers)
                         
+                        # video_url ve audio_url aynı (SaveNow.to'dan)
                         response = session.get(video_url, stream=True, verify=False, timeout=300)
                         response.raise_for_status()
                         break  # Başarılı ise döngüden çık
@@ -890,9 +883,6 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                         if response.status_code == 403:
                             print(f"❌ 403 Forbidden - Deneme {attempt + 1}")
                             if attempt < max_retries - 1:
-                                # IP değiştir simülasyonu
-                                headers['X-Forwarded-For'] = f"8.8.{attempt}.{attempt}"
-                                headers['X-Real-IP'] = f"8.8.{attempt}.{attempt}"
                                 continue
                         raise http_err
                     except Exception as e:
@@ -901,94 +891,17 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                             continue
                         raise e
                 
-                with open(temp_video, 'wb') as f:
+                with open(temp_file, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
                 
-                print(f"✅ Tam video indirildi: {os.path.getsize(temp_video)} bytes")
+                print(f"✅ Tam dosya indirildi: {os.path.getsize(temp_file)} bytes")
                 
             except Exception as e:
-                error_msg = f"Video indirme hatası: {str(e)[:200]}"
+                error_msg = f"Dosya indirme hatası: {str(e)[:200]}"
                 print(f"❌ {error_msg}")
                 # Tüm job'u failed yap
-                job = get_job(job_id)
-                if job:
-                    job['status'] = 'failed'
-                    job['error'] = error_msg
-                    job['completed_at'] = datetime.now().isoformat()
-                    save_job(job_id, job)
-                return
-            
-            # 2. TEK SEFERLIK AUDIO İNDİR
-            print(f"📥 Tam audio indiriliyor... (tek seferlik)")
-            try:
-                # Audio için özel headers
-                headers = {
-                    'User-Agent': user_agent,
-                    'Accept': '*/*',
-                    'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Cache-Control': 'no-cache',
-                    'DNT': '1',
-                    'Connection': 'keep-alive',
-                    'Sec-Fetch-Dest': 'audio',
-                    'Sec-Fetch-Mode': 'cors',
-                    'Sec-Fetch-Site': 'cross-site',
-                    'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Linux"',
-                    'X-Forwarded-For': '1.1.1.1',  # Cloudflare DNS
-                    'X-Real-IP': '1.1.1.1',
-                    'Referer': 'https://www.youtube.com/',
-                    'Origin': 'https://www.youtube.com'
-                }
-                
-                # Audio için retry
-                max_retries = 5
-                for attempt in range(max_retries):
-                    try:
-                        print(f"📥 Audio indirme denemesi {attempt + 1}/{max_retries}")
-                        
-                        if attempt > 0:
-                            delay = attempt * 2
-                            print(f"⏳ {delay} saniye bekleniyor...")
-                            time.sleep(delay)
-                        
-                        session = requests.Session()
-                        session.headers.update(headers)
-                        
-                        response = session.get(audio_url, stream=True, verify=False, timeout=300)
-                        response.raise_for_status()
-                        break
-                        
-                    except requests.exceptions.HTTPError as http_err:
-                        if response.status_code == 403:
-                            print(f"❌ Audio 403 Forbidden - Deneme {attempt + 1}")
-                            if attempt < max_retries - 1:
-                                headers['X-Forwarded-For'] = f"1.1.{attempt}.{attempt}"
-                                headers['X-Real-IP'] = f"1.1.{attempt}.{attempt}"
-                                continue
-                        raise http_err
-                    except Exception as e:
-                        if attempt < max_retries - 1:
-                            print(f"❌ Audio hata: {str(e)[:100]} - Tekrar deneniyor...")
-                            continue
-                        raise e
-                
-                with open(temp_audio, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                
-                print(f"✅ Tam audio indirildi: {os.path.getsize(temp_audio)} bytes")
-                
-            except Exception as e:
-                error_msg = f"Audio indirme hatası: {str(e)[:200]}"
-                print(f"❌ {error_msg}")
-                # Cleanup ve fail
-                if temp_video and os.path.exists(temp_video):
-                    os.remove(temp_video)
                 job = get_job(job_id)
                 if job:
                     job['status'] = 'failed'
@@ -1015,9 +928,9 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                 
                 print(f"✂️ Clip {idx+1}/{len(clips)}: {start}s - {end}s")
                 
-                # Local dosyalardan veya URL'den kes
+                # Local dosyadan veya URL'den kes
                 if use_download_mode:
-                    result = cut_clip_from_local_files(temp_video, temp_audio, video_id, start, end, title, resolution)
+                    result = cut_clip_from_local_file(temp_file, video_id, start, end, title, resolution)
                 else:
                     result = cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolution)
                 
@@ -1058,15 +971,12 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
                     job['processed'] += 1
                     save_job(job_id, job)
         
-        # Geçici dosyaları temizle
+        # Geçici dosyayı temizle
         if use_download_mode:
             try:
-                if temp_video and os.path.exists(temp_video):
-                    os.remove(temp_video)
-                    print(f"🗑️ Geçici video dosyası silindi")
-                if temp_audio and os.path.exists(temp_audio):
-                    os.remove(temp_audio)
-                    print(f"🗑️ Geçici audio dosyası silindi")
+                if temp_file and os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    print(f"🗑️ Geçici dosya silindi")
             except Exception as cleanup_error:
                 print(f"⚠️ Geçici dosya temizleme hatası: {cleanup_error}")
         
