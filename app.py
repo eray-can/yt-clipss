@@ -45,8 +45,8 @@ def delete_job(job_id):
         os.remove(job_file)
 
 def generate_clip_filename(video_id, start, end):
-    """Dosya adı oluştur: videoID-start-end.mp4"""
-    return f"{video_id}-{start}-{end}.mp4"
+    """Dosya adı oluştur: videoID-start-end_reels.mp4"""
+    return f"{video_id}-{start}-{end}_reels.mp4"
 
 def get_audio_from_turboscribe(video_id):
     """TurboScribe.ai'den sadece ses linkini al"""
@@ -507,46 +507,44 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
             
             print(f"✅ Video: {os.path.getsize(temp_video)} bytes, Audio: {os.path.getsize(temp_audio)} bytes")
             
-            # 3. Local dosyalardan FFmpeg ile kes (ses senkronizasyonu için)
+            # 3. Local dosyalardan Instagram Reels formatında kes (letterbox)
             cmd = [
-                 "ffmpeg",
-                 "-ss", str(start),
-                 "-i", temp_video,
-                 "-ss", str(start),
-                 "-i", temp_audio,
-                 "-t", str(duration),
-                 "-map", "0:v", "-map", "1:a",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                 "-af", "asetpts=PTS-STARTPTS",  # Audio timestamp sıfırla
-                 "-vf", "setpts=PTS-STARTPTS",   # Video timestamp sıfırla
-                 "-async", "1",                  # Audio senkronizasyon
-                 "-vsync", "cfr",                # Video frame rate sabit
-                 "-avoid_negative_ts", "make_zero",  # Negatif timestamp'leri sıfırla
-                 "-movflags", "+faststart", "-y", output_path
-             ]
+                "ffmpeg",
+                "-ss", str(start),
+                "-i", temp_video,
+                "-ss", str(start),
+                "-i", temp_audio,
+                "-t", str(duration),
+                "-map", "0:v", "-map", "1:a",
+                # Instagram Reels letterbox formatı (üst/alt siyah bar)
+                "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart", "-y", output_path
+            ]
         else:
             print(f"🔧 Standart platform - direkt URL modu")
-            # Diğer platformlar için direkt URL
+            # Diğer platformlar için direkt URL (Instagram Reels letterbox)
             cmd = [
-                  "ffmpeg",
-                  "-user_agent", user_agent,
-                  "-referer", "https://vidfly.ai/",
-                  "-ss", str(start),
-                  "-i", video_url,
-                  "-user_agent", user_agent,
-                  "-referer", "https://vidfly.ai/",
-                  "-ss", str(start),
-                  "-i", audio_url,
-                 "-t", str(duration),
-                 "-map", "0:v", "-map", "1:a",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                 "-af", "asetpts=PTS-STARTPTS",  # Audio timestamp sıfırla
-                 "-vf", "setpts=PTS-STARTPTS",   # Video timestamp sıfırla
-                 "-async", "1",                  # Audio senkronizasyon
-                 "-vsync", "cfr",                # Video frame rate sabit
-                 "-avoid_negative_ts", "make_zero",  # Negatif timestamp'leri sıfırla
-                 "-movflags", "+faststart", "-y", output_path
-             ]
+                "ffmpeg",
+                "-user_agent", user_agent,
+                "-referer", "https://downloaderto.com/",
+                "-ss", str(start),
+                "-i", video_url,
+                "-user_agent", user_agent,
+                "-referer", "https://downloaderto.com/",
+                "-ss", str(start),
+                "-i", audio_url,
+                "-t", str(duration),
+                "-map", "0:v", "-map", "1:a",
+                # Instagram Reels letterbox formatı (üst/alt siyah bar)
+                "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart", "-y", output_path
+            ]
         
         # FFmpeg'i çalıştır
         print(f"🔄 FFmpeg başlatılıyor...")
@@ -669,7 +667,7 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         return {"success": False, "error": error_msg}
 
 def cut_clip_from_local_file(temp_file, video_id, start, end, title, resolution):
-    """Local dosyadan kesit oluştur (tek dosya - video+audio birlikte)"""
+    """Local dosyadan kesit oluştur (Instagram Reels formatında 9:16)"""
     output_path = None
     
     try:
@@ -686,7 +684,7 @@ def cut_clip_from_local_file(temp_file, video_id, start, end, title, resolution)
                     "filename": output_file,
                     "video_info": {
                         "title": title,
-                        "resolution": resolution,
+                        "resolution": "1080x1920 (9:16)",
                         "file_size": file_size,
                         "file_size_mb": round(file_size / (1024 * 1024), 2)
                     }
@@ -696,14 +694,20 @@ def cut_clip_from_local_file(temp_file, video_id, start, end, title, resolution)
         
         duration = end - start
         
-        # Tek dosyadan FFmpeg ile kes (video+audio birlikte)
+        # Instagram Reels formatında kes (9:16 letterbox - üst/alt siyah bar)
         cmd = [
             "ffmpeg",
             "-ss", str(start),
             "-i", temp_file,
             "-t", str(duration),
-            "-c:v", "copy",  # Video copy
-            "-c:a", "copy",  # Audio copy (daha hızlı)
+            # Video filtreleri - Letterbox format (tüm içerik görünsün)
+            "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+            "-c:v", "libx264",  # H.264 codec (Instagram uyumlu)
+            "-preset", "fast",  # Encoding hızı
+            "-crf", "23",       # Kalite (18-28 arası, 23 iyi)
+            "-c:a", "aac",      # AAC audio codec
+            "-b:a", "128k",     # Audio bitrate
+            "-ar", "44100",     # Audio sample rate
             "-avoid_negative_ts", "make_zero",
             "-movflags", "+faststart", 
             "-y", output_path
@@ -744,13 +748,13 @@ def cut_clip_from_local_file(temp_file, video_id, start, end, title, resolution)
                 pass
             return {"success": False, "error": "Dosya boş oluşturuldu"}
         
-        print(f"✅ Kesit oluşturuldu: {output_file} ({round(file_size / (1024 * 1024), 2)} MB)")
+        print(f"✅ Instagram Reels kesiti oluşturuldu: {output_file} ({round(file_size / (1024 * 1024), 2)} MB)")
         return {
             "success": True,
             "filename": output_file,
             "video_info": {
                 "title": title,
-                "resolution": resolution,
+                "resolution": "1080x1920 (9:16)",
                 "file_size": file_size,
                 "file_size_mb": round(file_size / (1024 * 1024), 2)
             }

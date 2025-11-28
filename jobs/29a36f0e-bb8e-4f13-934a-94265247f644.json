@@ -1,0 +1,23 @@
+{
+  "job_id": "29a36f0e-bb8e-4f13-934a-94265247f644",
+  "video_id": "fQYu54iR_t8",
+  "status": "finished",
+  "created_at": "2025-11-28T23:02:40.163065",
+  "total": 1,
+  "processed": 1,
+  "clip_filenames": [
+    "fQYu54iR_t8-19.52-27.84_reels.mp4"
+  ],
+  "results": [
+    {
+      "start": 19.52,
+      "end": 27.84,
+      "filename": "fQYu54iR_t8-19.52-27.84_reels.mp4",
+      "video_title": "KARAF - Aşk Durdukça",
+      "resolution": "1080x1920 (9:16)",
+      "file_size_mb": 2.2
+    }
+  ],
+  "errors": [],
+  "completed_at": "2025-11-28T23:03:04.726711"
+}
