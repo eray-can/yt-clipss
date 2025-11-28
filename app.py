@@ -811,7 +811,17 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
         is_windows = platform.system() == 'Windows'
         use_download_mode = is_arm64 or is_windows
         
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+        # User-Agent rotation (bot detection önlemi)
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0"
+        ]
+        import random
+        user_agent = random.choice(user_agents)
+        print(f"🔄 Kullanılan User-Agent: {user_agent[:50]}...")
         
         if use_download_mode:
             if is_windows:
@@ -832,22 +842,64 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
             # 1. TEK SEFERLIK VIDEO İNDİR
             print(f"📥 Tam video indiriliyor... (tek seferlik)")
             try:
+                # Güçlü anti-bot headers (sunucu için)
                 headers = {
                     'User-Agent': user_agent,
-                    'Accept': '*/*',
-                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8',
                     'Accept-Encoding': 'gzip, deflate, br',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
                     'DNT': '1',
                     'Connection': 'keep-alive',
-                    'Sec-Fetch-Dest': 'video',
-                    'Sec-Fetch-Mode': 'no-cors',
-                    'Sec-Fetch-Site': 'cross-site',
-                    'Range': 'bytes=0-',
-                    'Referer': 'https://vidfly.ai/'
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Linux"',
+                    'X-Forwarded-For': '8.8.8.8',
+                    'X-Real-IP': '8.8.8.8',
+                    'Referer': 'https://www.youtube.com/',
+                    'Origin': 'https://www.youtube.com'
                 }
                 
-                response = requests.get(video_url, headers=headers, stream=True, verify=False, timeout=300)
-                response.raise_for_status()
+                # Güçlü retry mekanizması
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        print(f"📥 Video indirme denemesi {attempt + 1}/{max_retries}")
+                        
+                        # Her denemede farklı delay
+                        if attempt > 0:
+                            delay = attempt * 2  # 2, 4, 6, 8 saniye
+                            print(f"⏳ {delay} saniye bekleniyor...")
+                            time.sleep(delay)
+                        
+                        # Session kullan (cookie persistence)
+                        session = requests.Session()
+                        session.headers.update(headers)
+                        
+                        response = session.get(video_url, stream=True, verify=False, timeout=300)
+                        response.raise_for_status()
+                        break  # Başarılı ise döngüden çık
+                        
+                    except requests.exceptions.HTTPError as http_err:
+                        if response.status_code == 403:
+                            print(f"❌ 403 Forbidden - Deneme {attempt + 1}")
+                            if attempt < max_retries - 1:
+                                # IP değiştir simülasyonu
+                                headers['X-Forwarded-For'] = f"8.8.{attempt}.{attempt}"
+                                headers['X-Real-IP'] = f"8.8.{attempt}.{attempt}"
+                                continue
+                        raise http_err
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            print(f"❌ Hata: {str(e)[:100]} - Tekrar deneniyor...")
+                            continue
+                        raise e
                 
                 with open(temp_video, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
@@ -871,22 +923,58 @@ def process_clips_async(job_id, video_id, clips, video_url, audio_url, title, re
             # 2. TEK SEFERLIK AUDIO İNDİR
             print(f"📥 Tam audio indiriliyor... (tek seferlik)")
             try:
+                # Audio için özel headers
                 headers = {
                     'User-Agent': user_agent,
                     'Accept': '*/*',
-                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8',
                     'Accept-Encoding': 'gzip, deflate, br',
+                    'Cache-Control': 'no-cache',
                     'DNT': '1',
                     'Connection': 'keep-alive',
                     'Sec-Fetch-Dest': 'audio',
-                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Mode': 'cors',
                     'Sec-Fetch-Site': 'cross-site',
-                    'Range': 'bytes=0-',
-                    'Referer': 'https://vidfly.ai/'
+                    'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Linux"',
+                    'X-Forwarded-For': '1.1.1.1',  # Cloudflare DNS
+                    'X-Real-IP': '1.1.1.1',
+                    'Referer': 'https://www.youtube.com/',
+                    'Origin': 'https://www.youtube.com'
                 }
                 
-                response = requests.get(audio_url, headers=headers, stream=True, verify=False, timeout=300)
-                response.raise_for_status()
+                # Audio için retry
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        print(f"📥 Audio indirme denemesi {attempt + 1}/{max_retries}")
+                        
+                        if attempt > 0:
+                            delay = attempt * 2
+                            print(f"⏳ {delay} saniye bekleniyor...")
+                            time.sleep(delay)
+                        
+                        session = requests.Session()
+                        session.headers.update(headers)
+                        
+                        response = session.get(audio_url, stream=True, verify=False, timeout=300)
+                        response.raise_for_status()
+                        break
+                        
+                    except requests.exceptions.HTTPError as http_err:
+                        if response.status_code == 403:
+                            print(f"❌ Audio 403 Forbidden - Deneme {attempt + 1}")
+                            if attempt < max_retries - 1:
+                                headers['X-Forwarded-For'] = f"1.1.{attempt}.{attempt}"
+                                headers['X-Real-IP'] = f"1.1.{attempt}.{attempt}"
+                                continue
+                        raise http_err
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            print(f"❌ Audio hata: {str(e)[:100]} - Tekrar deneniyor...")
+                            continue
+                        raise e
                 
                 with open(temp_audio, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
