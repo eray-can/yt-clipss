@@ -549,7 +549,7 @@ def cut_clip_from_url(video_url, audio_url, video_id, start, end, title, resolut
         # FFmpeg'i çalıştır
         print(f"🔄 FFmpeg başlatılıyor...")
         print(f"🔧 FFmpeg komutu: {' '.join(cmd[:10])}...")  # İlk 10 parametreyi göster
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, encoding='utf-8', errors='replace')
         
         # Geçici dosyaları temizle (indirme modu)
         if use_download_mode:
@@ -714,7 +714,7 @@ def cut_clip_from_local_file(temp_file, video_id, start, end, title, resolution)
         ]
         
         print(f"🔧 FFmpeg komutu: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, encoding='utf-8', errors='replace')
         
         # FFmpeg stderr'ini logla
         if result.stderr:
