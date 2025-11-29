@@ -21,7 +21,7 @@ YouTube videolarından belirli zaman aralıklarında kesitler oluşturup URL ola
 
 ```bash
 pip install -r requirements.txt
-```
+```sdf
 
 ## 📦 Gereksinimler
 
