@@ -27,6 +27,8 @@ pip install -r requirements.txt
 
 - Python 3.9+
 - FFmpeg (sistemde kurulu olmalı)
+
+asd
 x<zc>
 
 ## 🧪 Testing
